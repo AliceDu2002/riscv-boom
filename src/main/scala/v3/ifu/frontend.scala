@@ -14,6 +14,7 @@ package boom.v3.ifu
 import chisel3._
 import chisel3.util._
 
+
 import org.chipsalliance.cde.config._
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.diplomacy._
@@ -302,6 +303,7 @@ class BoomFrontendIO(implicit p: Parameters) extends BoomBundle
 class BoomFrontend(val icacheParams: ICacheParams, staticIdForMetadataUseOnly: Int)(implicit p: Parameters) extends LazyModule
 {
   lazy val module = new BoomFrontendModule(this)
+  // println(getVerilog(BoomFrontendModule(this)))
   val icache = LazyModule(new boom.v3.ifu.ICache(icacheParams, staticIdForMetadataUseOnly))
   val masterNode = icache.masterNode
   val resetVectorSinkNode = BundleBridgeSink[UInt](Some(() =>
@@ -339,6 +341,7 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   val ras = Module(new BoomRAS)
 
   val icache = outer.icache.module
+  // println(getVerilog(icache))
   icache.io.invalidate := io.cpu.flush_icache
   val tlb = Module(new TLB(true, log2Ceil(fetchBytes), TLBConfig(nTLBSets, nTLBWays)))
   io.ptw <> tlb.io.ptw
@@ -372,6 +375,8 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   }
 
   icache.io.req.valid     := s0_valid
+  io.cpu.perf.icache_req_valid := s0_valid
+  
   icache.io.req.bits.addr := s0_vpc
 
   bpd.io.f0_req.valid      := s0_valid
@@ -517,6 +522,9 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   // --------------------------------------------------------
   // **** F3 ****
   // --------------------------------------------------------
+
+
+  
   val f3_clear = WireInit(false.B)
   val f3 = withReset(reset.asBool || f3_clear) {
     Module(new Queue(new FrontendResp, 1, pipe=true, flow=false)) }
@@ -527,6 +535,8 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
     Module(new Queue(new BranchPredictionBundle, 1, pipe=true, flow=true)) }
 
 
+
+  
 
 
   val f4_ready = Wire(Bool())
@@ -857,9 +867,13 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   f4_btb_corrections.io.enq.bits.meta                 := f3_fetch_bundle.bpd_meta
 
 
+  io.cpu.perf.imem_resp_q_ready := f3_ready
+  io.cpu.perf.imem_empty := !f3.io.deq.valid
+  
   // -------------------------------------------------------
   // **** F4 ****
   // -------------------------------------------------------
+
   val f4_clear = WireInit(false.B)
   val f4 = withReset(reset.asBool || f4_clear) {
     Module(new Queue(new FetchBundle, 1, pipe=true, flow=false))}
@@ -943,9 +957,15 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   }
 
 
+
+
   // -------------------------------------------------------
   // **** To Core (F5) ****
   // -------------------------------------------------------
+
+
+
+
 
   io.cpu.fetchpacket <> fb.io.deq
   io.cpu.get_pc <> ftq.io.get_ftq_pc
