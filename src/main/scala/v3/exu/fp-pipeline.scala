@@ -28,6 +28,7 @@ import boom.v3.util.{BoomCoreStringPrefix}
 class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUParameters
 {
   val fpIssueParams = issueParams.find(_.iqType == IQT_FP.litValue).get
+  println(">>> FpPipeline constructor invoked, issueWidth: " + fpIssueParams.issueWidth)
   val dispatchWidth = fpIssueParams.dispatchWidth
   val numLlPorts = memWidth
   val numWakeupPorts = fpIssueParams.issueWidth + numLlPorts
@@ -275,6 +276,7 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
 
   exe_units.map(_.io.fcsr_rm := io.fcsr_rm)
   exe_units.map(_.io.status := io.status)
+  
 
   //-------------------------------------------------------------
   // **** Flush Pipeline ****
@@ -285,10 +287,17 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
     exe_units(w).io.req.bits.kill := io.flush_pipeline
   }
 
-  override def toString: String =
-    (BoomCoreStringPrefix("===FP Pipeline===") + "\n"
-    + fregfile.toString
-    + BoomCoreStringPrefix(
-      "Num Wakeup Ports      : " + numWakeupPorts,
-      "Num Bypass Ports      : " + exe_units.numTotalBypassPorts))
+  
+  io.perf.iss_valids := iss_valids
+override def toString: String =
+  BoomCoreStringPrefix("===FP Pipeline===") + "\n" +
+  fregfile.toString +
+  BoomCoreStringPrefix(
+    "Num Wakeup Ports      : " + numWakeupPorts,
+    "Num Bypass Ports      : " + exe_units.numTotalBypassPorts,
+    "Num Execution Units   : " + exe_units.length
+  ) +
+  exe_units.zipWithIndex.map { case (u, i) =>
+    BoomCoreStringPrefix(s"  [FP EXE UNIT $i] " + u.toString)
+  }.mkString
 }
