@@ -251,8 +251,15 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   //-------------------------------------------------------------
   // Uarch Hardware Performance Events (HPEs)
 
-  val uopsissued_masked = if (boomParams.superscalarCounterMode == SuperscalarCSRMode.DISTRIBUTED_COUNTERS) Wire(Bool()) else null;
+  val uopsdis_masked = if (boomParams.superscalarCounterMode == SuperscalarCSRMode.DISTRIBUTED_COUNTERS) Wire(Bool()) else null;
   val fetchbubble_masked = if (boomParams.superscalarCounterMode == SuperscalarCSRMode.DISTRIBUTED_COUNTERS) Wire(Bool()) else null;
+
+
+
+
+  exe_units.foreach(unit => println(s"EXE UNIT: ${unit.toString}"))
+  
+
   val numCoreCounters = 2
   val coreCtrWidth = if (coreWidth == 1) 1 else log2Up(coreWidth)
 
@@ -267,15 +274,16 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     }
 
     // vectors holding masked event signals for each core
-    val uopsissued_masked_vec = Reg(Vec(coreWidth, Bool()))
+    val uopsdis_masked_vec = Reg(Vec(coreWidth, Bool()))
     val fetchbubble_masked_vec = Reg(Vec(coreWidth, Bool()))
 
     for (w <- 0 until coreWidth) {
       // event is core_counter_ack(w) & overflow(w)
 
-      // ("uopsissued", () => dec_fire(x))
-      val uopsissued_ctr = freechips.rocketchip.util.WideCounterOverflow(coreCtrWidth, dec_fire(w), false, false.B, core_counter_ack(w))
-      uopsissued_masked_vec(w) := uopsissued_ctr.overflow & core_counter_ack(w)
+      // ("uopsdis", () => dec_fire(x))
+      // val uopsissued_ctr = freechips.rocketchip.util.WideCounterOverflow(coreCtrWidth, dec_fire(w), false, false.B, core_counter_ack(w))
+      val uopsdis_ctr = freechips.rocketchip.util.WideCounterOverflow(coreCtrWidth, dis_fire(w), false, false.B, core_counter_ack(w))
+      uopsdis_masked_vec(w) := uopsdis_ctr.overflow & core_counter_ack(w)
 
       // ("fetchbubble", () => io.ifu.fetchpacket.valid && dec_fbundle.uops(x).valid))
       val fetchbubble_ctr = freechips.rocketchip.util.WideCounterOverflow(coreCtrWidth, dec_fbundle.uops(w).valid, false, false.B, core_counter_ack(w))
@@ -283,9 +291,58 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     }
 
     // perform or reduction to get event from any pipeline
-    uopsissued_masked := Cat(uopsissued_masked_vec).orR
+    uopsdis_masked := Cat(uopsdis_masked_vec).orR
     fetchbubble_masked := Cat(fetchbubble_masked_vec).orR
   }
+
+
+  // Perf recovering cycles
+  val recovering = RegInit(false.B)
+  when (io.ifu.sfence.valid || io.ifu.redirect_val || io.ifu.redirect_flush || rob.io.flush.valid) {
+    recovering := true.B
+  }
+  
+  // Clear recovery state once fetchpacket is valid again
+  when (io.ifu.fetchpacket.valid) {
+    recovering := false.B
+  }
+
+    // Exe units always fire when issue is valid. 
+  val exe_req_fire = iss_valids ++ fp_pipeline.io.perf.iss_valids
+  println(s"Exe units fire: ${exe_req_fire.length}!")
+  println(s"iss_valids: ${iss_valids}!")
+  println(s"fp_pipeline.io.perf.iss_valids: ${fp_pipeline.io.perf.iss_valids}!")
+
+  val fpIssueParams = issueParams.find(_.iqType == IQT_FP.litValue).get
+  // Issue units empty
+  val issue_units_empty = issue_units.map(_.io.perf.event_empty) :+ fp_pipeline.io.perf.issue_unit_empty
+
+  println(s"Issue units empty: ${issue_units_empty.length}!")
+  println(s"issue_units.map: ${ issue_units.map(_.io.perf.event_empty)}!")
+  println(s"fp_pipeline.io.perf.issue_unit_empty ${fp_pipeline.io.perf.issue_unit_empty}!")
+
+
+  val issue_unit_widths = issue_units.map(_.issueWidth) :+ fpIssueParams.issueWidth
+
+  val dcache_blocked = Wire(Vec(issue_units.length + 1, Bool()))
+  var idx = 0
+  for ((empty, i) <- issue_units.map(_.io.perf.event_empty).zipWithIndex) {
+    val width = issue_units(i).issueWidth
+    val fires = exe_req_fire.slice(idx, idx + width)
+    val nothing_fired = !fires.reduce(_ || _)
+    dcache_blocked(i) := !empty && nothing_fired && io.lsu.perf.outstanding
+    idx += width
+  }
+
+  // Handle fp pipeline (last unit)
+  val fp_width = fpIssueParams.issueWidth
+
+  val fp_fires = exe_req_fire.slice(idx, idx + fp_width)
+  val fp_nothing_fired = !fp_fires.reduce(_ || _)
+  dcache_blocked.last := !fp_pipeline.io.perf.issue_unit_empty && fp_nothing_fired && io.lsu.perf.outstanding
+
+
+
 
   val perfEvents = boomParams.superscalarCounterMode match {
     case SuperscalarCSRMode.NONE =>
@@ -294,19 +351,58 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
           ("exception", () => rob.io.com_xcpt.valid)
         )),
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
-          ("exception", () => rob.io.com_xcpt.valid)
-        ))
-      ))
+    //    ("I$ blocked",                        () => icache_blocked),
+          ("nop",                               () => false.B),
+          ("branch misprediction",              () => b2.mispredict),
+          ("control-flow target misprediction", () => b2.mispredict &&
+                                                      b2.cfi_type === CFI_JALR),
+          ("flush",                             () => rob.io.flush.valid),
+          ("branch resolved",                   () => b2.valid)
+        )),
+        new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+          ("I$ miss",     () => io.ifu.perf.acquire),
+          ("D$ miss",     () => io.lsu.perf.acquire),
+          ("D$ release",  () => io.lsu.perf.release),
+          ("ITLB miss",   () => io.ifu.perf.tlbMiss),
+          ("DTLB miss",   () => io.lsu.perf.tlbMiss),
+          ("L2 TLB miss", () => io.ptw.perf.l2miss))),
+        new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR,
+          Seq.tabulate(retireWidth)(x => ("uops retired" + x, () => rob.io.commit.valids(x)))
+          ++ Seq.tabulate(retireWidth)(x => ("fence" + x, () => rob.io.commit.valids(x) && rob.io.commit.uops(x).is_fence || rob.io.commit.uops(x).is_fencei))
+          ++ Seq.tabulate(coreWidth)(x => ("uops dispatched" + x, () => dec_fire(x)))
+          ++ Seq.tabulate(exe_units.length) ( x => ("uops issued" + x, () => exe_req_fire(x)))
+          ++ Seq.tabulate(coreWidth)(x => ("fetch bubble" + x, () => !recovering  && (!io.ifu.fetchpacket.valid || !dec_fbundle.uops(x).valid)))
+          ++ Seq.tabulate(dcache_blocked.length)(x => ("D$ blocked" + x, () => dcache_blocked.asUInt(x)))
+      )))
     case SuperscalarCSRMode.SCALAR_COUNTERS =>
       new freechips.rocketchip.rocket.EventSets(Seq(
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
           ("exception", () => rob.io.com_xcpt.valid)
         )),
+        new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+    //    ("I$ blocked",                        () => icache_blocked),
+          ("nop",                               () => false.B),
+          ("branch misprediction",              () => b2.mispredict),
+          ("control-flow target misprediction", () => b2.mispredict &&
+                                                      b2.cfi_type === CFI_JALR),
+          ("flush",                             () => rob.io.flush.valid),
+          ("branch resolved",                   () => b2.valid)
+        )),
+        new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+          ("I$ miss",     () => io.ifu.perf.acquire),
+          ("D$ miss",     () => io.lsu.perf.acquire),
+          ("D$ release",  () => io.lsu.perf.release),
+          ("ITLB miss",   () => io.ifu.perf.tlbMiss),
+          ("DTLB miss",   () => io.lsu.perf.tlbMiss),
+          ("L2 TLB miss", () => io.ptw.perf.l2miss)
+        )),
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR,
-          Seq.tabulate(1)(x => ("exception", () => rob.io.com_xcpt.valid))
-          ++ Seq.tabulate(coreWidth)(x => ("uopsissued" + x, () => dec_fire(x)))
-          ++ Seq.tabulate(coreWidth)(x => ("fetchbubble" + x, () => io.ifu.fetchpacket.valid && dec_fbundle.uops(x).valid))
-        )
+          Seq.tabulate(retireWidth)(x => ("uops retired" + x, () => rob.io.commit.valids(x)))
+          ++ Seq.tabulate(retireWidth)(x => ("fence" + x, () => rob.io.commit.valids(x) && rob.io.commit.uops(x).is_fence || rob.io.commit.uops(x).is_fencei))
+          ++ Seq.tabulate(coreWidth)(x => ("uops dispatched" + x, () => dec_fire(x)))
+          ++ Seq.tabulate(exe_units.length) ( i => ("uops issued" + i, () => exe_req_fire(i)))
+          ++ Seq.tabulate(coreWidth)(x => ("fetch bubble" + x, () => !io.ifu.fetchpacket.valid || !dec_fbundle.uops(x).valid)
+        ))
       ))
     case SuperscalarCSRMode.ADD_WIRES =>
       new freechips.rocketchip.rocket.SuperscalarEventSets(Seq(
@@ -316,11 +412,25 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
           ))),
           (a, b) => a + b
         ),
+        // Just so the TMA evt set is the same
+        (
+          Seq(new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+            ("exception", () => rob.io.com_xcpt.valid)
+          ))),
+          (a, b) => a + b
+        ),
+        // Just so the TMA evt set is the same
+        (
+          Seq(new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+            ("exception", () => rob.io.com_xcpt.valid)
+          ))),
+          (a, b) => a + b
+        ),
         (
           Seq.tabulate(coreWidth)(x => // for each core
             new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
-              ("uopsissued", () => dec_fire(x)),
-              ("fetchbubble", () => io.ifu.fetchpacket.valid && dec_fbundle.uops(x).valid)
+              ("uops dispatched", () => dis_fire(x)),
+              ("fetch bubble", () => io.ifu.fetchpacket.valid && dec_fbundle.uops(x).valid)
             ))
           ),
           (a, b) => { // accumulate sum of event signals in a cycle
@@ -337,10 +447,18 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
           ("exception", () => rob.io.com_xcpt.valid)
         )),
+        // Just so TMA EVT is the same
+        new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+          ("exception", () => rob.io.com_xcpt.valid)
+        )),
+        // Just so TMA EVT is the same
+        new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+          ("exception", () => rob.io.com_xcpt.valid)
+        )),
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
           ("exception", () => rob.io.com_xcpt.valid),
-          ("uopsissued", () => uopsissued_masked),
-          ("fetchbubble", () => fetchbubble_masked)
+          ("uops dispatched", () => uopsdis_masked),
+          ("fetch bubble", () => fetchbubble_masked)
         ))
       ))
     case _ => null
