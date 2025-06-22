@@ -284,8 +284,14 @@ class BoomFrontendIO(implicit p: Parameters) extends BoomBundle
 
   val flush_icache = Output(Bool())
 
-  val perf = Input(new FrontendPerfEvents)
-}
+  val perf = Input( new Bundle {
+      val acquire = Bool()
+      val tlbMiss = Bool()
+      val icache_req_valid = Bool()
+      val imem_resp_q_ready = Bool()
+      val imem_empty = Bool()
+    })
+} 
 
 /**
  * Top level Frontend class
