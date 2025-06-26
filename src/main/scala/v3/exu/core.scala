@@ -251,13 +251,36 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   //-------------------------------------------------------------
   // Uarch Hardware Performance Events (HPEs)
 
-  val uopsissued_masked = if (boomParams.superscalarCounterMode == SuperscalarCSRMode.DISTRIBUTED_COUNTERS) Wire(Bool()) else null;
-  val fetchbubble_masked = if (boomParams.superscalarCounterMode == SuperscalarCSRMode.DISTRIBUTED_COUNTERS) Wire(Bool()) else null;
-  val numCoreCounters = 2
+  val uopsissued_masked = if (boomParams.topdownCounterMode == TopdownCSRMode.DISTRIBUTED_COUNTERS) Wire(Bool()) else null;
+  val fetchbubble_masked = if (boomParams.topdownCounterMode == TopdownCSRMode.DISTRIBUTED_COUNTERS) Wire(Bool()) else null;
   val coreCtrWidth = if (coreWidth == 1) 1 else log2Up(coreWidth)
 
+
+//object TopdownCaseStudy {
+//  val NONE = 0
+//            new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR,
+//          Seq.tabulate(retireWidth)(x => ("uops retired" + x, () => rob.io.commit.valids(x)))
+//          ++ Seq.tabulate(retireWidth)(x => ("fence" + x, () => rob.io.commit.valids(x) && rob.io.commit.uops(x).is_fence || rob.io.commit.uops(x).is_fencei))
+//          ++ Seq.tabulate(coreWidth)(x => ("uops dispatched" + x, () => dec_fire(x)))
+//          ++ Seq.tabulate(exe_units.length) ( x => ("uops issued" + x, () => exe_req_fire(x)))
+//          ++ Seq.tabulate(coreWidth)(x => ("fetch bubble" + x, () => !recovering  && (!io.ifu.fetchpacket.valid || !dec_fbundle.uops(x).valid)))
+//          ++ Seq.tabulate(dcache_blocked.length)(x => ("D$ blocked" + x, () => dcache_blocked.asUInt(x)))
+//  val BASE = 1
+//      new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR,
+//        Seq.tabulate(exe_units.length) ( x => ("uops issued" + x, () => exe_req_fire(x)))
+//      )))
+//  val EXTRAPOLATE = 2
+//      new freechips.rocketchip.rocket.EventSet((mask, hits) =>  ("uops issued2",                   () => uops_issued(2))
+//  val CORRELATED = 3
+//      new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR,
+//        Seq.tabulate(coreWidth)(x => ("uops dispatched" + x, () => dec_fire(x)))
+//      )))
+//}
+//
+//topdownCaseStudy: Int = TopdownCaseStudy.NONE
+
   // distributed counter
-  if (boomParams.superscalarCounterMode == SuperscalarCSRMode.DISTRIBUTED_COUNTERS) {
+  if (boomParams.topdownCounterMode == TopdownCSRMode.DISTRIBUTED_COUNTERS) {
     // barrel shifter for acknowledge signal
     val core_counter_ack = Reg(UInt(coreWidth.W))
     when (reset.asBool) {
@@ -287,8 +310,8 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     fetchbubble_masked := Cat(fetchbubble_masked_vec).orR
   }
 
-  val perfEvents = boomParams.superscalarCounterMode match {
-    case SuperscalarCSRMode.NONE =>
+  val perfEvents = boomParams.topdownCounterMode match {
+    case TopdownCSRMode.NONE =>
       new freechips.rocketchip.rocket.EventSets(Seq(
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
           ("exception", () => rob.io.com_xcpt.valid)
@@ -297,7 +320,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
           ("exception", () => rob.io.com_xcpt.valid)
         ))
       ))
-    case SuperscalarCSRMode.SCALAR_COUNTERS =>
+    case TopdownCSRMode.SCALAR_COUNTERS =>
       new freechips.rocketchip.rocket.EventSets(Seq(
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
           ("exception", () => rob.io.com_xcpt.valid)
@@ -308,7 +331,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
           ++ Seq.tabulate(coreWidth)(x => ("fetchbubble" + x, () => io.ifu.fetchpacket.valid && dec_fbundle.uops(x).valid))
         )
       ))
-    case SuperscalarCSRMode.ADD_WIRES =>
+    case TopdownCSRMode.ADD_WIRES =>
       new freechips.rocketchip.rocket.SuperscalarEventSets(Seq(
         (
           Seq(new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
@@ -332,13 +355,12 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
           }
         )
       ))
-    case SuperscalarCSRMode.DISTRIBUTED_COUNTERS =>
+    case TopdownCSRMode.DISTRIBUTED_COUNTERS =>
       new freechips.rocketchip.rocket.EventSets(Seq(
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
           ("exception", () => rob.io.com_xcpt.valid)
         )),
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
-          ("exception", () => rob.io.com_xcpt.valid),
           ("uopsissued", () => uopsissued_masked),
           ("fetchbubble", () => fetchbubble_masked)
         ))
@@ -346,14 +368,14 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     case _ => null
   }
 
-  val csr = boomParams.superscalarCounterMode match {
-    case SuperscalarCSRMode.NONE =>
+  val csr = boomParams.topdownCounterMode match {
+    case TopdownCSRMode.NONE =>
       Module(new freechips.rocketchip.rocket.CSRFile(perfEvents.asInstanceOf[freechips.rocketchip.rocket.EventSets], boomParams.customCSRs.decls))
-    case SuperscalarCSRMode.SCALAR_COUNTERS =>
+    case TopdownCSRMode.SCALAR_COUNTERS =>
       Module(new freechips.rocketchip.rocket.CSRFile(perfEvents.asInstanceOf[freechips.rocketchip.rocket.EventSets], boomParams.customCSRs.decls))
-    case SuperscalarCSRMode.ADD_WIRES =>
+    case TopdownCSRMode.ADD_WIRES =>
       Module(new freechips.rocketchip.rocket.SuperscalarCSRFile(perfEvents.asInstanceOf[freechips.rocketchip.rocket.SuperscalarEventSets], boomParams.customCSRs.decls))
-    case SuperscalarCSRMode.DISTRIBUTED_COUNTERS =>
+    case TopdownCSRMode.DISTRIBUTED_COUNTERS =>
       Module(new freechips.rocketchip.rocket.CSRFile(perfEvents.asInstanceOf[freechips.rocketchip.rocket.EventSets], boomParams.customCSRs.decls))
     case _ => null
   }
@@ -368,14 +390,14 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
 
   //val icache_blocked = !(io.ifu.fetchpacket.valid || RegNext(io.ifu.fetchpacket.valid))
   val icache_blocked = false.B
-  csr.io.counters foreach { c => c.inc := RegNext(boomParams.superscalarCounterMode match {
-      case SuperscalarCSRMode.NONE =>
+  csr.io.counters foreach { c => c.inc := RegNext(boomParams.topdownCounterMode match {
+      case TopdownCSRMode.NONE =>
         perfEvents.asInstanceOf[freechips.rocketchip.rocket.EventSets].evaluate(c.eventSel)
-      case SuperscalarCSRMode.SCALAR_COUNTERS =>
+      case TopdownCSRMode.SCALAR_COUNTERS =>
         perfEvents.asInstanceOf[freechips.rocketchip.rocket.EventSets].evaluate(c.eventSel)
-      case SuperscalarCSRMode.ADD_WIRES =>
+      case TopdownCSRMode.ADD_WIRES =>
         perfEvents.asInstanceOf[freechips.rocketchip.rocket.SuperscalarEventSets].evaluate(c.eventSel)
-      case SuperscalarCSRMode.DISTRIBUTED_COUNTERS =>
+      case TopdownCSRMode.DISTRIBUTED_COUNTERS =>
         perfEvents.asInstanceOf[freechips.rocketchip.rocket.EventSets].evaluate(c.eventSel)
       case _ => null
     })
@@ -1113,6 +1135,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
 
   // Extra I/O
   // Delay retire/exception 1 cycle
+  // PopCount sums the number of 1's
   csr.io.retire    := RegNext(PopCount(rob.io.commit.arch_valids.asUInt))
   csr.io.exception := RegNext(rob.io.com_xcpt.valid)
   // csr.io.pc used for setting EPC during exception or CSR.io.trace.
