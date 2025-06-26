@@ -32,15 +32,6 @@ class WithBoomCommitLogPrintf extends Config((site, here, up) => {
   }
 })
 
-// class WithBoomTraceEnabled extends Config((site, here, up) => {
-//   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
-//     case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core = tp.tileParams.core.copy(
-//       enableDetailedTrace = true
-//     )))
-//     case other => other
-//   }
-// })
-
 
 class WithBoomBranchPrintf extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
@@ -91,11 +82,7 @@ class WithRationalBoomTiles extends Config((site, here, up) => {
 /**
  * 1-wide BOOM.
  */
-<<<<<<< HEAD
-class WithNSmallBooms(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
-=======
 class WithNSmallBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
->>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
   new WithTAGELBPD ++ // Default to TAGE-L BPD
   new Config((site, here, up) => {
     case TilesLocated(InSubsystem) => {
@@ -142,11 +129,7 @@ class WithNSmallBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode
 /**
  * 2-wide BOOM.
  */
-<<<<<<< HEAD
-class WithNMediumBooms(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
-=======
 class WithNMediumBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
->>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
   new WithTAGELBPD ++ // Default to TAGE-L BPD
   new Config((site, here, up) => {
     case TilesLocated(InSubsystem) => {
@@ -193,7 +176,7 @@ class WithNMediumBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMod
 /**
  * 3-wide BOOM. Try to match the Cortex-A15.
  */
-class WithNLargeBooms(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
+class WithNLargeBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.NONE, configNPerfCounters: Int = 29, configDCacheNSets: Int = 64) extends Config(
   new WithTAGELBPD ++ // Default to TAGE-L BPD
   new Config((site, here, up) => {
     case TilesLocated(InSubsystem) => {
@@ -241,11 +224,7 @@ class WithNLargeBooms(n: Int = 1, configSuperscalarCounterMode: Int = Superscala
 /**
  * 4-wide BOOM.
  */
-<<<<<<< HEAD
-class WithNMegaBooms(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
-=======
 class WithNMegaBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.NONE, configNPerfCounters: Int = 29, configTopdownCaseStudy: Int = TopdownCaseStudy.NONE) extends Config(
->>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
   new WithTAGELBPD ++ // Default to TAGE-L BPD
   new Config((site, here, up) => {
     case TilesLocated(InSubsystem) => {
@@ -294,11 +273,7 @@ class WithNMegaBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.
 /**
  * 5-wide BOOM.
   */
-<<<<<<< HEAD
-class WithNGigaBooms(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
-=======
 class WithNGigaBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
->>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
   new WithTAGELBPD ++ // Default to TAGE-L BPD
   new Config((site, here, up) => {
     case TilesLocated(InSubsystem) => {
@@ -571,54 +546,3 @@ class WithSWBPD extends Config((site, here, up) => {
     case other => other
   }
 })
-
-
-
-
-// DOC include start: LargeBoomConfig
-/**
- * 3-wide BOOM. Try to match the Cortex-A15.
- */
-class WithNLargeBoomsMemWidth(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
-  new WithTAGELBPD ++ // Default to TAGE-L BPD
-  new Config((site, here, up) => {
-    case TilesLocated(InSubsystem) => {
-      val prev = up(TilesLocated(InSubsystem), site)
-      val idOffset = up(NumTiles)
-      (0 until n).map { i =>
-        BoomTileAttachParams(
-          tileParams = BoomTileParams(
-            core = BoomCoreParams(
-              fetchWidth = 8,
-              decodeWidth = 3,
-              numRobEntries = 96,
-              issueParams = Seq(
-                IssueParams(issueWidth=2, numEntries=16, iqType=IQT_MEM.litValue, dispatchWidth=3),
-                IssueParams(issueWidth=2, numEntries=32, iqType=IQT_INT.litValue, dispatchWidth=3),
-                IssueParams(issueWidth=1, numEntries=24, iqType=IQT_FP.litValue , dispatchWidth=3)),
-              numIntPhysRegisters = 100,
-              numFpPhysRegisters = 96,
-              numLdqEntries = 24,
-              numStqEntries = 24,
-              maxBrCount = 16,
-              numFetchBufferEntries = 24,
-              nPerfCounters = configNPerfCounters,
-              superscalarCounterMode = configSuperscalarCounterMode,
-              ftq = FtqParameters(nEntries=32),
-              fpu = Some(freechips.rocketchip.tile.FPUParams(sfmaLatency=4, dfmaLatency=4, divSqrt=true))
-            ),
-            dcache = Some(
-              DCacheParams(rowBits = 128, nSets=64, nWays=8, nMSHRs=4, nTLBWays=16)
-            ),
-            icache = Some(
-              ICacheParams(rowBits = 128, nSets=64, nWays=8, fetchBytes=4*4)
-            ),
-            tileId = i + idOffset
-          ),
-          crossingParams = RocketCrossingParams()
-        )
-      } ++ prev
-    }
-    case NumTiles => up(NumTiles) + n
-  })
-)
