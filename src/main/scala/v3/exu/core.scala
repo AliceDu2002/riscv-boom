@@ -63,6 +63,16 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     val fcsr_rm = UInt(freechips.rocketchip.tile.FPConstants.RM_SZ.W)
   })
 
+  // purely debugging purposes
+  val debug_trace_bundle = new BoomTraceBundle()
+
+  println(s"BoomTraceBundle with total length: ${debug_trace_bundle.getWidth} and fields:")
+  debug_trace_bundle.elements.foreach { case (name, data) =>
+    println(s"  $name: ${data.getClass.getSimpleName} (${data.getWidth})")
+  }
+  require(debug_trace_bundle.getWidth == 128, s"Expected 128-bit trace bundle, got ${debug_trace_bundle.getWidth}")
+
+
   io.ptw_tlb := DontCare
   io.ptw := DontCare
   io.ifu := DontCare
@@ -75,8 +85,11 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   val jmp_unit_idx = exe_units.jmp_unit_idx
   val jmp_unit = exe_units(jmp_unit_idx)
 
+  println(s"Jump unit index: ${jmp_unit_idx}, unit: ${jmp_unit.toString}")
+
   // Meanwhile, the FP pipeline holds the FP issue window, FP regfile, and FP arithmetic units.
   var fp_pipeline: FpPipeline = null
+  println("Using FPU: " + usingFPU )
   if (usingFPU) fp_pipeline = Module(new FpPipeline)
 
   // ********************************************************
@@ -148,6 +161,9 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   val int_ren_wakeups  = Wire(Vec(numIntRenameWakeupPorts, Valid(new ExeUnitResp(xLen))))
   val pred_wakeup  = Wire(Valid(new ExeUnitResp(1)))
 
+
+  println(s"Exe units length: ${exe_units.length}, issue width ${issue_units.map(_.issueWidth).sum}, issue params: ${issueParams.map(_.issueWidth).sum}")
+  
   require (exe_units.length == issue_units.map(_.issueWidth).sum)
 
   //***********************************
@@ -297,15 +313,19 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
 
 
   // Perf recovering cycles
-  val recovering = RegInit(false.B)
-  when (io.ifu.sfence.valid || io.ifu.redirect_val || io.ifu.redirect_flush || rob.io.flush.valid) {
-    recovering := true.B
+  val will_recover = io.ifu.sfence.valid || io.ifu.redirect_val || io.ifu.redirect_flush || rob.io.flush.valid
+  val recoveringReg = RegInit(false.B)
+  when (will_recover) {
+    recoveringReg := true.B
   }
   
+  val will_stop_recover = io.ifu.fetchpacket.valid 
   // Clear recovery state once fetchpacket is valid again
-  when (io.ifu.fetchpacket.valid) {
-    recovering := false.B
+  when (will_stop_recover) {
+    recoveringReg := false.B
   }
+
+  val recovering = !will_stop_recover && recoveringReg || will_recover 
 
     // Exe units always fire when issue is valid. 
   val exe_req_fire = iss_valids ++ fp_pipeline.io.perf.iss_valids
@@ -316,32 +336,49 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   val fpIssueParams = issueParams.find(_.iqType == IQT_FP.litValue).get
   // Issue units empty
   val issue_units_empty = issue_units.map(_.io.perf.event_empty) :+ fp_pipeline.io.perf.issue_unit_empty
+  val has_slot_with_all_valid_operands = issue_units.map(_.io.perf.has_slot_with_all_valid_operands) :+ fp_pipeline.io.perf.has_slot_with_all_valid_operands
 
   println(s"Issue units empty: ${issue_units_empty.length}!")
   println(s"issue_units.map: ${ issue_units.map(_.io.perf.event_empty)}!")
   println(s"fp_pipeline.io.perf.issue_unit_empty ${fp_pipeline.io.perf.issue_unit_empty}!")
 
 
-  val issue_unit_widths = issue_units.map(_.issueWidth) :+ fpIssueParams.issueWidth
+  // val issue_unit_widths = issue_units.map(_.issueWidth) :+ fpIssueParams.issueWidth
 
-  val dcache_blocked = Wire(Vec(issue_units.length + 1, Bool()))
-  var idx = 0
-  for ((empty, i) <- issue_units.map(_.io.perf.event_empty).zipWithIndex) {
-    val width = issue_units(i).issueWidth
-    val fires = exe_req_fire.slice(idx, idx + width)
-    val nothing_fired = !fires.reduce(_ || _)
-    dcache_blocked(i) := !empty && nothing_fired && io.lsu.perf.outstanding
-    idx += width
+  // val dcache_blocked = Wire(Vec(issue_units.length + 1, Bool()))
+  // var idx = 0
+  // for ((empty, i) <- issue_units.map(_.io.perf.event_empty).zipWithIndex) {
+  //   val width = issue_units(i).issueWidth
+  //   val fires = exe_req_fire.slice(idx, idx + width)
+  //   val nothing_fired = !fires.reduce(_ || _)
+  //   dcache_blocked(i) := !empty && nothing_fired && io.lsu.perf.outstanding
+  //   idx += width
+  // }
+
+
+  // val fp_width = fpIssueParams.issueWidth
+  // val fp_fires = exe_req_fire.slice(idx, idx + fp_width)
+  // val fp_nothing_fired = !fp_fires.reduce(_ || _)
+  // dcache_blocked.last := !fp_pipeline.io.perf.issue_unit_empty && fp_nothing_fired && io.lsu.perf.outstanding
+
+
+  val dcache_blocked = Wire(Vec(coreWidth, Bool()))
+
+  // Count how many uops issued this cycle
+  val num_issued = PopCount(exe_req_fire)
+  
+
+  // Were any issue units non-empty last cycle?
+  val was_nonempty_last_cycle = !RegNext(
+    issue_units.map(_.io.perf.event_empty).reduce(_ && _) &&
+    fp_pipeline.io.perf.issue_unit_empty,
+    init = false.B
+  )
+
+  // For each lane i, block if we issued fewer than (i+1) and issue queues were not empty
+  for (i <- 0 until coreWidth) {
+    dcache_blocked(i) := (num_issued < (i + 1).U) && was_nonempty_last_cycle && io.lsu.perf.outstanding
   }
-
-  // Handle fp pipeline (last unit)
-  val fp_width = fpIssueParams.issueWidth
-
-  val fp_fires = exe_req_fire.slice(idx, idx + fp_width)
-  val fp_nothing_fired = !fp_fires.reduce(_ || _)
-  dcache_blocked.last := !fp_pipeline.io.perf.issue_unit_empty && fp_nothing_fired && io.lsu.perf.outstanding
-
-
 
 
   val perfEvents = boomParams.superscalarCounterMode match {
@@ -367,12 +404,13 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
           ("DTLB miss",   () => io.lsu.perf.tlbMiss),
           ("L2 TLB miss", () => io.ptw.perf.l2miss))),
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR,
-          Seq.tabulate(retireWidth)(x => ("uops retired" + x, () => rob.io.commit.valids(x)))
+          Seq(("I$ Blocked", () => icache_blocked2)) 
+          ++ Seq(("Recovering", () => recovering))
+          ++ Seq.tabulate(coreWidth)(x => ("D$ blocked" + x, () => dcache_blocked.asUInt(x)))
+          ++ Seq.tabulate(retireWidth)(x => ("uops retired" + x, () => rob.io.commit.valids(x)))
           ++ Seq.tabulate(retireWidth)(x => ("fence" + x, () => rob.io.commit.valids(x) && rob.io.commit.uops(x).is_fence || rob.io.commit.uops(x).is_fencei))
-          ++ Seq.tabulate(coreWidth)(x => ("uops dispatched" + x, () => dec_fire(x)))
+          ++ Seq.tabulate(coreWidth)(x => ("fetch bubble" + x, () => !recovering  && ((!io.ifu.fetchpacket.valid && dec_ready) || !dec_fbundle.uops(x).valid )))
           ++ Seq.tabulate(exe_units.length) ( x => ("uops issued" + x, () => exe_req_fire(x)))
-          ++ Seq.tabulate(coreWidth)(x => ("fetch bubble" + x, () => !recovering  && (!io.ifu.fetchpacket.valid || !dec_fbundle.uops(x).valid)))
-          ++ Seq.tabulate(dcache_blocked.length)(x => ("D$ blocked" + x, () => dcache_blocked.asUInt(x)))
       )))
     case SuperscalarCSRMode.SCALAR_COUNTERS =>
       new freechips.rocketchip.rocket.EventSets(Seq(
@@ -397,13 +435,14 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
           ("L2 TLB miss", () => io.ptw.perf.l2miss)
         )),
         new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR,
-          Seq.tabulate(retireWidth)(x => ("uops retired" + x, () => rob.io.commit.valids(x)))
+          Seq(("I$ Blocked", () => icache_blocked2)) 
+          ++ Seq(("Recovering", () => recovering))
+          ++ Seq.tabulate(coreWidth)(x => ("D$ blocked" + x, () => dcache_blocked.asUInt(x)))
+          ++ Seq.tabulate(retireWidth)(x => ("uops retired" + x, () => rob.io.commit.valids(x)))
           ++ Seq.tabulate(retireWidth)(x => ("fence" + x, () => rob.io.commit.valids(x) && rob.io.commit.uops(x).is_fence || rob.io.commit.uops(x).is_fencei))
-          ++ Seq.tabulate(coreWidth)(x => ("uops dispatched" + x, () => dec_fire(x)))
-          ++ Seq.tabulate(exe_units.length) ( i => ("uops issued" + i, () => exe_req_fire(i)))
-          ++ Seq.tabulate(coreWidth)(x => ("fetch bubble" + x, () => !io.ifu.fetchpacket.valid || !dec_fbundle.uops(x).valid)
-        ))
-      ))
+          ++ Seq.tabulate(coreWidth)(x => ("fetch bubble" + x, () => !recovering  && (!io.ifu.fetchpacket.valid || !dec_fbundle.uops(x).valid)))
+          ++ Seq.tabulate(exe_req_fire.length) ( x => ("uops issued" + x, () => exe_req_fire(x)))
+      )))
     case SuperscalarCSRMode.ADD_WIRES =>
       new freechips.rocketchip.rocket.SuperscalarEventSets(Seq(
         (
@@ -412,30 +451,47 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
           ))),
           (a, b) => a + b
         ),
-        // Just so the TMA evt set is the same
         (
           Seq(new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
-            ("exception", () => rob.io.com_xcpt.valid)
-          ))),
-          (a, b) => a + b
-        ),
-        // Just so the TMA evt set is the same
-        (
-          Seq(new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
-            ("exception", () => rob.io.com_xcpt.valid)
+            ("nop",                               () => false.B),
+            ("branch misprediction", () => b2.mispredict),
+            ("control-flow target misprediction", () => b2.mispredict && b2.cfi_type === CFI_JALR),
+            ("flush", () => rob.io.flush.valid),
+            ("branch resolved", () => b2.valid)
           ))),
           (a, b) => a + b
         ),
         (
-          Seq.tabulate(coreWidth)(x => // for each core
+          Seq(new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+            ("I$ miss", () => io.ifu.perf.acquire),
+            ("D$ miss", () => io.lsu.perf.acquire),
+            ("D$ release",  () => io.lsu.perf.release),
+            ("ITLB miss",   () => io.ifu.perf.tlbMiss),
+            ("DTLB miss",   () => io.lsu.perf.tlbMiss),
+            ("L2 TLB miss", () => io.ptw.perf.l2miss)
+          ))),
+          (a, b) => a + b
+        ),
+        (
+          Seq.tabulate(exe_req_fire.length)(x =>
             new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
-              ("uops dispatched", () => dis_fire(x)),
-              ("fetch bubble", () => io.ifu.fetchpacket.valid && dec_fbundle.uops(x).valid)
+              ("I$ Blocked", () => icache_blocked2),
+              ("Recovering", () => recovering),
+              (s"D$$ blocked$x", () => if (x >= coreWidth) false.B else dcache_blocked.asUInt(x)),
+              (s"uops retired$x", () => if (x >= retireWidth) false.B else rob.io.commit.valids(x)),
+              (s"fence$x", () =>
+                if (x >= retireWidth) false.B
+                else rob.io.commit.valids(x) &&
+                    (rob.io.commit.uops(x).is_fence || rob.io.commit.uops(x).is_fencei)),
+              (s"fetch bubble$x", () =>
+                if (x >= coreWidth) false.B
+                else !recovering && (!io.ifu.fetchpacket.valid || !dec_fbundle.uops(x).valid)),
+              (s"uops issued$x", () => exe_req_fire(x))
             ))
           ),
-          (a, b) => { // accumulate sum of event signals in a cycle
-            val a2 = Wire(UInt(log2Ceil(1+coreWidth).W))
-            val b2 = Wire(UInt(log2Ceil(1+coreWidth).W))
+          (a, b) => {
+            val a2 = Wire(UInt(log2Ceil(1 + exe_req_fire.length).W))
+            val b2 = Wire(UInt(log2Ceil(1 + exe_req_fire.length).W))
             a2 := a
             b2 := b
             a2 + b2
@@ -484,8 +540,9 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
 
   (custom_csrs.csrs zip csr.io.customCSRs).map { case (lhs, rhs) => lhs <> rhs }
 
-  //val icache_blocked = !(io.ifu.fetchpacket.valid || RegNext(io.ifu.fetchpacket.valid))
-  val icache_blocked = false.B
+  val icache_blocked = io.ifu.perf.refill_valid && io.ifu.perf.imem_empty
+  val icache_blocked2 = !io.ifu.fetchpacket.valid && io.ifu.perf.refill_valid
+
   csr.io.counters foreach { c => c.inc := RegNext(boomParams.superscalarCounterMode match {
       case SuperscalarCSRMode.NONE =>
         perfEvents.asInstanceOf[freechips.rocketchip.rocket.EventSets].evaluate(c.eventSel)
@@ -553,6 +610,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
 
   override def toString: String =
     (BoomCoreStringPrefix("====Overall Core Params====") + "\n"
+    + "Exe units length: " + exe_units.length + "\n"
     + exe_units.toString + "\n"
     + fpPipelineStr + "\n"
     + rob.toString + "\n"
@@ -1423,6 +1481,9 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     ll_wbarb.io.in(2)       <> exe_units.rocc_unit.io.ll_iresp
   }
 
+  val wb_fires = iregfile.io.write_ports.map(_.valid) ++ fp_pipeline.io.perf.wb_fires
+
+
   //-------------------------------------------------------------
   //-------------------------------------------------------------
   // **** Commit Stage ****
@@ -1628,7 +1689,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
 
 
   //-------------------------------------------------------------
-  //-------------------------------------------------------------
+  //----------------------------\---------------------------------
   // Page Table Walker
 
   io.ptw.ptbr       := csr.io.ptbr
@@ -1659,12 +1720,145 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     }
   }
 
+
   io.trace := DontCare
   io.trace.time := csr.io.time
   io.trace.insns map (t => t.valid := false.B)
   io.trace.custom.get.asInstanceOf[BoomTraceBundle].rob_empty := rob.io.empty
 
+
+
   if (trace) {
+
+    // Hookup special tracerv trace s\ignal
+    val count = RegInit(0.U(30.W))
+    count := count + 1.U
+
+
+    val boomTraceBundle = io.trace.custom.get.asInstanceOf[BoomTraceBundle]
+
+
+    val traceWidth = 4
+    // val traceIssueWidth = 10
+    boomTraceBundle.br_mispredict := b2.mispredict
+    boomTraceBundle.refill_valid := io.ifu.perf.refill_valid
+    boomTraceBundle.i_cache_miss := io.ifu.perf.acquire
+    boomTraceBundle.d_cache_miss := io.lsu.perf.acquire
+    boomTraceBundle.itlb_miss := io.ifu.perf.tlbMiss
+    boomTraceBundle.dtlb_miss := io.lsu.perf.tlbMiss
+    boomTraceBundle.l2_tlb_miss := io.ptw.perf.l2miss
+    boomTraceBundle.fetch_packet := io.ifu.fetchpacket.valid
+    boomTraceBundle.s0_valid := io.ifu.perf.s0_valid
+    boomTraceBundle.s0_replay := io.ifu.perf.s0_replay
+    boomTraceBundle.s1_valid := io.ifu.perf.s1_valid
+    boomTraceBundle.s1_replay := io.ifu.perf.s1_replay
+    boomTraceBundle.f3_valid := io.ifu.perf.f3_valid
+    boomTraceBundle.f3_ready := io.ifu.perf.f3_ready
+    boomTraceBundle.f4_valid := io.ifu.perf.f4_valid
+    boomTraceBundle.f4_ready := io.ifu.perf.f4_ready
+    boomTraceBundle.imem_empty := io.ifu.perf.imem_empty
+    boomTraceBundle.recovering := recovering
+    boomTraceBundle.flush := rob.io.flush.valid
+    boomTraceBundle.flush_frontend := rob.io.flush_frontend
+    boomTraceBundle.outstanding := io.lsu.perf.outstanding
+    boomTraceBundle.icache_blocked := icache_blocked
+    boomTraceBundle.icache_blocked2 := icache_blocked2
+
+
+    (0 until traceWidth).foreach { i =>
+      if (i < coreWidth) {
+        boomTraceBundle.uops_decoded(i) := dec_fire(i)
+      } else {
+        boomTraceBundle.uops_decoded(i) := false.B
+      }
+    }
+
+    (0 until 2).foreach { i =>
+      if (i < coreWidth) {
+        boomTraceBundle.issue_units_empty(i) := issue_units_empty(i)
+      } else {
+        boomTraceBundle.issue_units_empty(i) := false.B
+      }
+    }
+    (0 until 2).foreach { i =>
+      if (i < coreWidth) {
+        boomTraceBundle.has_slot_with_all_valid_operands(i) := has_slot_with_all_valid_operands(i)
+      } else {
+        boomTraceBundle.has_slot_with_all_valid_operands(i) := false.B
+      }
+    }
+    (0 until 5).foreach { i =>
+      if (i < coreWidth) {
+        boomTraceBundle.wb_fires(i) := wb_fires(i)
+      } else {
+        boomTraceBundle.wb_fires(i) := false.B
+      }
+    }
+
+    (0 until traceWidth).foreach { i =>
+      if (i < coreWidth) {
+        boomTraceBundle.uops_dispatched(i) := dis_fire(i)
+      } else {
+        boomTraceBundle.uops_dispatched(i) := false.B
+      }
+    }
+
+    (0 until 3).foreach { i =>
+      if (i < coreWidth) {
+        boomTraceBundle.isu_empty(i) := issue_units_empty(i)
+      } else {
+        boomTraceBundle.isu_empty(i) := false.B
+      }
+    }
+    
+    (0 until traceWidth).foreach { i =>
+      if (i < coreWidth) {
+        boomTraceBundle.dcache_blocked(i) := dcache_blocked.asUInt(i)
+      } else {
+        boomTraceBundle.dcache_blocked(i) := false.B
+      }
+    }
+
+    require(traceWidth + 2 >= exe_req_fire.length,
+      "traceWidth * 2 must be greater than or equal to exe_req_fire length")
+    (0 until traceWidth + 2).foreach { i =>
+      if (i < exe_req_fire.length) {
+        boomTraceBundle.uops_issued(i) := exe_req_fire(i)
+      } else {
+        boomTraceBundle.uops_issued(i) := false.B
+      }
+    }
+
+    (0 until traceWidth).foreach { i =>
+      if (i < coreWidth) {
+        boomTraceBundle.dec_fbundle(i) :=  dec_fbundle.uops(i).valid
+      } else {
+        boomTraceBundle.dec_fbundle(i) := false.B
+      }
+    }
+
+    (0 until traceWidth).foreach { i =>
+      if (i < coreWidth) {
+        boomTraceBundle.retired_fence(i) := 
+        rob.io.commit.uops(i).is_fence || rob.io.commit.uops(i).is_fencei
+      } else {
+        boomTraceBundle.retired_fence(i) := false.B
+      }
+    }
+
+    (0 until traceWidth).foreach { i =>
+      if (i < retireWidth) {
+        boomTraceBundle.retired_uops(i) := rob.io.commit.valids(i)
+      } else {
+        boomTraceBundle.retired_uops(i) := false.B
+      }
+    }
+    boomTraceBundle.padding := VecInit(Seq.fill(3)(false.B))
+    boomTraceBundle.danger := VecInit(Seq.fill(16)(false.B))
+    boomTraceBundle.test_data := count(4,0)
+
+
+
     for (w <- 0 until coreWidth) {
       // Delay the trace so we have a cycle to pull PCs out of the FTQ
       io.trace.insns(w).valid      := RegNext(rob.io.commit.arch_valids(w))

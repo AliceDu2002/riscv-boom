@@ -89,6 +89,7 @@ class IssueUnitIO(
 
   val perf = new Bundle{
     val event_empty      = Output(Bool()) // used by HPM events; is the issue unit empty?
+    val has_slot_with_all_valid_operands = Output(Bool())
   }
 
   val tsc_reg          = Input(UInt(width=xLen.W))
@@ -165,9 +166,11 @@ abstract class IssueUnit(
     issue_slots(i).kill             := io.flush_pipeline
   }
 
-  val empty = issue_slots.map(_.valid).reduce(_||_)
+  val empty = !issue_slots.map(_.valid).reduce(_||_)
+  val has_slot_with_all_valid_operands = issue_slots.map( slot => slot.valid && slot.debug.p1 && slot.debug.p2 && slot.debug.p3 && slot.debug.ppred).reduce(_&&_)
 
   io.perf.event_empty := empty
+  io.perf.has_slot_with_all_valid_operands := has_slot_with_all_valid_operands
 
   // val waitingOnLSU = Wire(Bool())
   // waitingOnLSU := false.B

@@ -113,8 +113,7 @@ case class BoomCoreParams(
   /* debug stuff */
   enableCommitLogPrintf: Boolean = false,
   enableBranchPrintf: Boolean = false,
-  enableMemtracePrintf: Boolean = false
-
+  enableMemtracePrintf: Boolean = false,
 // DOC include end: BOOM Parameters
 ) extends freechips.rocketchip.tile.CoreParams
 {
@@ -135,8 +134,46 @@ case class BoomCoreParams(
   override def customCSRs(implicit p: Parameters) = new BoomCustomCSRs
 }
 
-class BoomTraceBundle extends Bundle {
+class BoomTraceBundle(val traceWidth: Int = 4, val traceIssueWidth : Int = 8) extends Bundle {
   val rob_empty = Bool()
+  val br_mispredict   = Bool()
+  val refill_valid   = Bool()
+  val i_cache_miss    = Bool()
+  val d_cache_miss    = Bool()
+  val itlb_miss       = Bool()
+  val dtlb_miss       = Bool()
+  val l2_tlb_miss     = Bool()
+  val fetch_packet    = Bool()
+  val s0_valid    = Bool() // icache req valid
+  val s0_replay    = Bool()
+  val s1_valid    = Bool()
+  val s1_replay    = Bool()
+  val f3_ready    = Bool()
+  val f3_valid    = Bool()
+  val f4_valid    = Bool()
+  val f4_ready    = Bool()
+  val imem_empty    = Bool()
+  val recovering    = Bool()
+  val flush    = Bool()
+  val flush_frontend    = Bool()
+  val outstanding    = Bool()
+  val icache_blocked = Bool()
+  val icache_blocked2 = Bool() // 24
+  val uops_decoded = Vec(traceWidth, Bool()) //29
+  val issue_units_empty = Vec(3, Bool()) //32
+  val has_slot_with_all_valid_operands = Vec(3, Bool()) //35
+  val wb_fires = Vec(6, Bool()) // 41
+  val uops_dispatched = Vec(traceWidth, Bool()) // 45
+  val isu_empty = Vec(3, Bool()) // 48
+  val dcache_blocked = Vec(traceWidth, Bool()) // 52
+  val uops_issued = Vec(traceWidth + 2, Bool()) // 58
+  val dec_fbundle = Vec(traceWidth, Bool())  // 62
+  val padding = Vec(3, Bool()) // Make sure to add up to 64 bits up to here
+  val danger =  Vec(16, Bool()) // This bits get lost somewhere in the driver due to bug I think TODO: Fix
+  val test_data = UInt((36).W) // For trace sanity checking
+  val dec_fire = Vec(traceWidth, Bool())
+  val retired_fence = Vec(traceWidth, Bool() )
+  val retired_uops = Vec(traceWidth, Bool())
 }
 
 /**
