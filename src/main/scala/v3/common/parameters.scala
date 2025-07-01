@@ -20,11 +20,18 @@ import boom.v3.exu._
 import boom.v3.lsu._
 
 /* Superscalar aggregation mode */
-object SuperscalarCSRMode {
-  val NONE = 0
-  val SCALAR_COUNTERS = 1
-  val ADD_WIRES = 2
-  val DISTRIBUTED_COUNTERS = 3
+object TopdownCSRMode {
+  val NONE = 0                  // Do not track top-down events
+  val SCALAR_COUNTERS = 1       // Count events separately
+  val ADD_WIRES = 2             // Aggregate each separate event into a multi-bit increment signal
+  val DISTRIBUTED_COUNTERS = 3  // Use local counter and arbitrate each overflow as increment
+}
+
+object TopdownCaseStudy {
+  val NONE = 0        // Normal evaluation
+  val BASE = 1        // Track uops issued from each execution unit
+  val EXTRAPOLATE = 2 // Extrapolate the activity of one execution unit
+  val CORRELATED = 3  // Use a cheaper event that has correlated activity
 }
 
 /**
@@ -108,7 +115,8 @@ case class BoomCoreParams(
   trace: Boolean = false,
 
   /* performance counter architecture */
-  superscalarCounterMode: Int = SuperscalarCSRMode.SCALAR_COUNTERS,
+  topdownCounterMode: Int = TopdownCSRMode.SCALAR_COUNTERS,
+  topdownCaseStudy: Int = TopdownCaseStudy.NONE,
 
   /* debug stuff */
   enableCommitLogPrintf: Boolean = false,
@@ -315,10 +323,10 @@ trait HasBoomCoreParameters extends freechips.rocketchip.tile.HasCoreParameters
   val enableGHistStallRepair = boomParams.enableGHistStallRepair
   val enableBTBFastRepair = boomParams.enableBTBFastRepair
 
-  require(boomParams.superscalarCounterMode == SuperscalarCSRMode.NONE ||
-    boomParams.superscalarCounterMode == SuperscalarCSRMode.SCALAR_COUNTERS ||
-    boomParams.superscalarCounterMode == SuperscalarCSRMode.ADD_WIRES ||
-    boomParams.superscalarCounterMode == SuperscalarCSRMode.DISTRIBUTED_COUNTERS)
+  require(boomParams.topdownCounterMode == TopdownCSRMode.NONE ||
+    boomParams.topdownCounterMode == TopdownCSRMode.SCALAR_COUNTERS ||
+    boomParams.topdownCounterMode == TopdownCSRMode.ADD_WIRES ||
+    boomParams.topdownCounterMode == TopdownCSRMode.DISTRIBUTED_COUNTERS)
 
   //************************************
   // Implicitly calculated constants

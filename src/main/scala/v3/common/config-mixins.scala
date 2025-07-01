@@ -91,7 +91,11 @@ class WithRationalBoomTiles extends Config((site, here, up) => {
 /**
  * 1-wide BOOM.
  */
+<<<<<<< HEAD
 class WithNSmallBooms(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
+=======
+class WithNSmallBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
+>>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
   new WithTAGELBPD ++ // Default to TAGE-L BPD
   new Config((site, here, up) => {
     case TilesLocated(InSubsystem) => {
@@ -116,7 +120,7 @@ class WithNSmallBooms(n: Int = 1, configSuperscalarCounterMode: Int = Superscala
               numFetchBufferEntries = 8,
               ftq = FtqParameters(nEntries=16),
               nPerfCounters = configNPerfCounters,
-              superscalarCounterMode = configSuperscalarCounterMode,
+              topdownCounterMode = configTopdownCounterMode,
               fpu = Some(freechips.rocketchip.tile.FPUParams(sfmaLatency=4, dfmaLatency=4, divSqrt=true))
             ),
             dcache = Some(
@@ -138,7 +142,11 @@ class WithNSmallBooms(n: Int = 1, configSuperscalarCounterMode: Int = Superscala
 /**
  * 2-wide BOOM.
  */
+<<<<<<< HEAD
 class WithNMediumBooms(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
+=======
+class WithNMediumBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
+>>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
   new WithTAGELBPD ++ // Default to TAGE-L BPD
   new Config((site, here, up) => {
     case TilesLocated(InSubsystem) => {
@@ -163,7 +171,7 @@ class WithNMediumBooms(n: Int = 1, configSuperscalarCounterMode: Int = Superscal
               numFetchBufferEntries = 16,
               ftq = FtqParameters(nEntries=32),
               nPerfCounters = configNPerfCounters,
-              superscalarCounterMode = configSuperscalarCounterMode,
+              topdownCounterMode = configTopdownCounterMode,
               fpu = Some(freechips.rocketchip.tile.FPUParams(sfmaLatency=4, dfmaLatency=4, divSqrt=true))
             ),
             dcache = Some(
@@ -185,7 +193,11 @@ class WithNMediumBooms(n: Int = 1, configSuperscalarCounterMode: Int = Superscal
 /**
  * 3-wide BOOM. Try to match the Cortex-A15.
  */
+<<<<<<< HEAD
 class WithNLargeBooms(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
+=======
+class WithNLargeBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.NONE, configNPerfCounters: Int = 29, configDCacheNSets: Int = 64) extends Config(
+>>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
   new WithTAGELBPD ++ // Default to TAGE-L BPD
   new Config((site, here, up) => {
     case TilesLocated(InSubsystem) => {
@@ -209,12 +221,12 @@ class WithNLargeBooms(n: Int = 1, configSuperscalarCounterMode: Int = Superscala
               maxBrCount = 16,
               numFetchBufferEntries = 24,
               nPerfCounters = configNPerfCounters,
-              superscalarCounterMode = configSuperscalarCounterMode,
+              topdownCounterMode = configTopdownCounterMode,
               ftq = FtqParameters(nEntries=32),
               fpu = Some(freechips.rocketchip.tile.FPUParams(sfmaLatency=4, dfmaLatency=4, divSqrt=true))
             ),
             dcache = Some(
-              DCacheParams(rowBits = 128, nSets=64, nWays=8, nMSHRs=4, nTLBWays=16)
+              DCacheParams(rowBits = 128, nSets=configDCacheNSets, nWays=8, nMSHRs=4, nTLBWays=16)
             ),
             icache = Some(
               ICacheParams(rowBits = 128, nSets=64, nWays=8, fetchBytes=4*4)
@@ -233,7 +245,11 @@ class WithNLargeBooms(n: Int = 1, configSuperscalarCounterMode: Int = Superscala
 /**
  * 4-wide BOOM.
  */
+<<<<<<< HEAD
 class WithNMegaBooms(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
+=======
+class WithNMegaBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.NONE, configNPerfCounters: Int = 29, configTopdownCaseStudy: Int = TopdownCaseStudy.NONE) extends Config(
+>>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
   new WithTAGELBPD ++ // Default to TAGE-L BPD
   new Config((site, here, up) => {
     case TilesLocated(InSubsystem) => {
@@ -258,7 +274,8 @@ class WithNMegaBooms(n: Int = 1, configSuperscalarCounterMode: Int = Superscalar
               numFetchBufferEntries = 32,
               enablePrefetching = true,
               nPerfCounters = configNPerfCounters,
-              superscalarCounterMode = configSuperscalarCounterMode,
+              topdownCounterMode = configTopdownCounterMode,
+              topdownCaseStudy = configTopdownCaseStudy,
               ftq = FtqParameters(nEntries=40),
               fpu = Some(freechips.rocketchip.tile.FPUParams(sfmaLatency=4, dfmaLatency=4, divSqrt=true))
             ),
@@ -281,7 +298,11 @@ class WithNMegaBooms(n: Int = 1, configSuperscalarCounterMode: Int = Superscalar
 /**
  * 5-wide BOOM.
   */
+<<<<<<< HEAD
 class WithNGigaBooms(n: Int = 1, configSuperscalarCounterMode: Int = SuperscalarCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
+=======
+class WithNGigaBooms(n: Int = 1, configTopdownCounterMode: Int = TopdownCSRMode.NONE, configNPerfCounters: Int = 29) extends Config(
+>>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
   new WithTAGELBPD ++ // Default to TAGE-L BPD
   new Config((site, here, up) => {
     case TilesLocated(InSubsystem) => {
@@ -306,7 +327,7 @@ class WithNGigaBooms(n: Int = 1, configSuperscalarCounterMode: Int = Superscalar
               numFetchBufferEntries = 35,
               enablePrefetching = true,
               nPerfCounters = configNPerfCounters,
-              superscalarCounterMode = configSuperscalarCounterMode,
+              topdownCounterMode = configTopdownCounterMode,
               numDCacheBanks = 1,
               ftq = FtqParameters(nEntries=40),
               fpu = Some(freechips.rocketchip.tile.FPUParams(sfmaLatency=4, dfmaLatency=4, divSqrt=true))
