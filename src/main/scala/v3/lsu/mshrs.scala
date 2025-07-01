@@ -91,6 +91,10 @@ class BoomMSHR(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()(p)
     val wb_resp     = Input(Bool())
 
     val probe_rdy   = Output(Bool())
+
+    val perf = new Bundle {
+      val active = Output(Bool())
+    }
   })
 
   // TODO: Optimize this. We don't want to mess with cache during speculation
@@ -105,6 +109,22 @@ class BoomMSHR(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()(p)
 
   val s_invalid :: s_refill_req :: s_refill_resp :: s_drain_rpq_loads :: s_meta_read :: s_meta_resp_1 :: s_meta_resp_2 :: s_meta_clear :: s_wb_meta_read :: s_wb_req :: s_wb_resp :: s_commit_line :: s_drain_rpq :: s_meta_write_req :: s_mem_finish_1 :: s_mem_finish_2 :: s_prefetched :: s_prefetch :: Nil = Enum(18)
   val state = RegInit(s_invalid)
+
+<<<<<<< HEAD
+  val active = RegInit(false.B)
+  when (state === s_refill_req){
+    active := true.B
+  }
+  
+  when (state === s_refill_resp){
+    active := false.B
+  }
+
+
+  // io.perf.active := active
+=======
+>>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
+  io.perf.active := state =/= s_invalid
 
   val req     = Reg(new BoomDCacheReqInternal)
   val req_idx = req.addr(untagBits-1, blockOffBits)
@@ -545,6 +565,10 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
 
     val fence_rdy = Output(Bool())
     val probe_rdy = Output(Bool())
+    
+    val perf = new Bundle {
+      val active = Output(Bool())
+    }
   })
 
   val req_idx = OHToUInt(io.req.map(_.valid))
@@ -700,6 +724,9 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
 
     mshr
   }
+
+
+  io.perf.active := mshrs.map(_.io.perf.active).reduce(_ || _)
 
   // Try to round-robin the MSHRs
   val mshr_head      = RegInit(0.U(log2Ceil(cfg.nMSHRs).W))

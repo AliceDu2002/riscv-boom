@@ -14,6 +14,7 @@ package boom.v3.ifu
 import chisel3._
 import chisel3.util._
 
+
 import org.chipsalliance.cde.config._
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.diplomacy._
@@ -284,8 +285,33 @@ class BoomFrontendIO(implicit p: Parameters) extends BoomBundle
 
   val flush_icache = Output(Bool())
 
-  val perf = Input(new FrontendPerfEvents)
-}
+  val perf = Input( new Bundle {
+      val acquire = Bool()
+<<<<<<< HEAD
+      val refill_valid = Bool()
+      val tlbMiss = Bool()
+      val s0_valid = Bool()
+      val s0_replay = Bool()
+      val s1_valid = Bool()
+      val s1_replay = Bool()
+      val f3_ready = Bool()
+      val f3_valid = Bool()
+      val f4_valid = Bool()
+      val f4_ready = Bool()
+      val f5_valid = Bool()
+      val f5_ready = Bool()
+      
+      val imem_resp_q_ready = Bool()
+      val imem_empty = Bool()
+
+=======
+      val tlbMiss = Bool()
+      val icache_req_valid = Bool()
+      val imem_resp_q_ready = Bool()
+      val imem_empty = Bool()
+>>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
+    })
+} 
 
 /**
  * Top level Frontend class
@@ -296,6 +322,7 @@ class BoomFrontendIO(implicit p: Parameters) extends BoomBundle
 class BoomFrontend(val icacheParams: ICacheParams, staticIdForMetadataUseOnly: Int)(implicit p: Parameters) extends LazyModule
 {
   lazy val module = new BoomFrontendModule(this)
+  // println(getVerilog(BoomFrontendModule(this)))
   val icache = LazyModule(new boom.v3.ifu.ICache(icacheParams, staticIdForMetadataUseOnly))
   val masterNode = icache.masterNode
   val resetVectorSinkNode = BundleBridgeSink[UInt](Some(() =>
@@ -333,11 +360,13 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   val ras = Module(new BoomRAS)
 
   val icache = outer.icache.module
+  // println(getVerilog(icache))
   icache.io.invalidate := io.cpu.flush_icache
   val tlb = Module(new TLB(true, log2Ceil(fetchBytes), TLBConfig(nTLBSets, nTLBWays)))
   io.ptw <> tlb.io.ptw
   io.cpu.perf.tlbMiss := io.ptw.req.fire
   io.cpu.perf.acquire := icache.io.perf.acquire
+  io.cpu.perf.refill_valid := icache.io.perf.refill_valid
 
   // --------------------------------------------------------
   // **** NextPC Select (F0) ****
@@ -366,6 +395,11 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   }
 
   icache.io.req.valid     := s0_valid
+<<<<<<< HEAD
+=======
+  io.cpu.perf.icache_req_valid := s0_valid
+>>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
+  
   icache.io.req.bits.addr := s0_vpc
 
   bpd.io.f0_req.valid      := s0_valid
@@ -511,6 +545,9 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   // --------------------------------------------------------
   // **** F3 ****
   // --------------------------------------------------------
+
+
+  
   val f3_clear = WireInit(false.B)
   val f3 = withReset(reset.asBool || f3_clear) {
     Module(new Queue(new FrontendResp, 1, pipe=true, flow=false)) }
@@ -521,6 +558,8 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
     Module(new Queue(new BranchPredictionBundle, 1, pipe=true, flow=true)) }
 
 
+
+  
 
 
   val f4_ready = Wire(Bool())
@@ -851,9 +890,13 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   f4_btb_corrections.io.enq.bits.meta                 := f3_fetch_bundle.bpd_meta
 
 
+  io.cpu.perf.imem_resp_q_ready := f3_ready
+  io.cpu.perf.imem_empty := !f3.io.deq.valid
+  
   // -------------------------------------------------------
   // **** F4 ****
   // -------------------------------------------------------
+
   val f4_clear = WireInit(false.B)
   val f4 = withReset(reset.asBool || f4_clear) {
     Module(new Queue(new FetchBundle, 1, pipe=true, flow=false))}
@@ -937,9 +980,28 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   }
 
 
+
+
   // -------------------------------------------------------
   // **** To Core (F5) ****
   // -------------------------------------------------------
+
+
+
+<<<<<<< HEAD
+  io.cpu.perf.s0_valid := s0_valid
+  io.cpu.perf.s0_replay := s0_is_replay
+  io.cpu.perf.s1_valid := s1_valid
+  io.cpu.perf.s1_replay := s1_is_replay
+  io.cpu.perf.f3_ready := f3.io.enq.ready
+  io.cpu.perf.f3_valid := f3.io.enq.valid
+  io.cpu.perf.f4_valid := f4.io.enq.valid
+  io.cpu.perf.f4_ready := f4.io.enq.ready
+  io.cpu.perf.f5_valid := fb.io.deq.valid
+  io.cpu.perf.f5_ready := fb.io.deq.ready
+=======
+>>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
+
 
   io.cpu.fetchpacket <> fb.io.deq
   io.cpu.get_pc <> ftq.io.get_ftq_pc
