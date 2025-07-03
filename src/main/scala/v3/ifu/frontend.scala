@@ -287,9 +287,7 @@ class BoomFrontendIO(implicit p: Parameters) extends BoomBundle
 
   val perf = Input( new Bundle {
       val acquire = Bool()
-<<<<<<< HEAD
       val refill_valid = Bool()
-      val tlbMiss = Bool()
       val s0_valid = Bool()
       val s0_replay = Bool()
       val s1_valid = Bool()
@@ -300,16 +298,11 @@ class BoomFrontendIO(implicit p: Parameters) extends BoomBundle
       val f4_ready = Bool()
       val f5_valid = Bool()
       val f5_ready = Bool()
-      
-      val imem_resp_q_ready = Bool()
-      val imem_empty = Bool()
 
-=======
       val tlbMiss = Bool()
       val icache_req_valid = Bool()
       val imem_resp_q_ready = Bool()
       val imem_empty = Bool()
->>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
     })
 } 
 
@@ -395,10 +388,7 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   }
 
   icache.io.req.valid     := s0_valid
-<<<<<<< HEAD
-=======
   io.cpu.perf.icache_req_valid := s0_valid
->>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
   
   icache.io.req.bits.addr := s0_vpc
 
@@ -986,9 +976,6 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   // **** To Core (F5) ****
   // -------------------------------------------------------
 
-
-
-<<<<<<< HEAD
   io.cpu.perf.s0_valid := s0_valid
   io.cpu.perf.s0_replay := s0_is_replay
   io.cpu.perf.s1_valid := s1_valid
@@ -999,8 +986,6 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   io.cpu.perf.f4_ready := f4.io.enq.ready
   io.cpu.perf.f5_valid := fb.io.deq.valid
   io.cpu.perf.f5_ready := fb.io.deq.ready
-=======
->>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
 
 
   io.cpu.fetchpacket <> fb.io.deq
@@ -1024,7 +1009,7 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
     s0_is_replay := false.B
     s0_is_sfence := true.B
 
-  }.elsewhen (io.cpu.redirect_flush) {
+}.elsewhen (io.cpu.redirect_flush) {
     fb.io.clear := true.B
     f4_clear    := true.B
     f3_clear    := true.B
