@@ -58,11 +58,8 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
     val perf = Output(new Bundle {
       val iss_valids = Vec(fpIssueParams.issueWidth, Output(Bool()))
       val issue_unit_empty = Output(Bool())
-<<<<<<< HEAD
       val has_slot_with_all_valid_operands = Output(Bool())
       val wb_fires = Output(Vec(memWidth + 1, Bool()))
-=======
->>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
     })
   })
 
@@ -104,12 +101,8 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
   //*************************************************************
   // Hookup the issue unit perf
   io.perf.issue_unit_empty := issue_unit.io.perf.event_empty
-<<<<<<< HEAD
   io.perf.has_slot_with_all_valid_operands := issue_unit.io.perf.has_slot_with_all_valid_operands
   io.perf.wb_fires := fregfile.io.write_ports.map(_.valid)
-=======
-
->>>>>>> 75c4e290742e44d989f973d19187529ff22602a7
 
   //*************************************************************
   // Issue window logic

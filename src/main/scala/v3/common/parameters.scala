@@ -113,10 +113,12 @@ case class BoomCoreParams(
   mcontextWidth: Int = 0,
   scontextWidth: Int = 0,
   trace: Boolean = false,
-
   /* performance counter architecture */
   topdownCounterMode: Int = TopdownCSRMode.SCALAR_COUNTERS,
   topdownCaseStudy: Int = TopdownCaseStudy.NONE,
+
+  override val nLBREntries : Int = 0,
+
 
   /* debug stuff */
   enableCommitLogPrintf: Boolean = false,
@@ -365,4 +367,9 @@ trait HasBoomCoreParameters extends freechips.rocketchip.tile.HasCoreParameters
 
   val corePAddrBits = paddrBits
   val corePgIdxBits = pgIdxBits
+
+  //************************************
+  // Profiling hardware parameters
+  // val nLBREntries = boomParams.nLBREntries
+
 }

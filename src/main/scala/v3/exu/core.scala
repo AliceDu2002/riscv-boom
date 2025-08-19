@@ -43,6 +43,7 @@ import freechips.rocketchip.devices.tilelink.{PLICConsts, CLINTConsts}
 import boom.v3.common._
 import boom.v3.ifu.{GlobalHistory, HasBoomFrontendParameters}
 import boom.v3.exu.FUConstants._
+import boom.v3.prof.LBR
 import boom.v3.util._
 
 /**
@@ -492,6 +493,22 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
         perfEvents.asInstanceOf[freechips.rocketchip.rocket.EventSets].evaluate(c.eventSel)
       case _ => null
     })
+  }
+
+  //****************************************
+  // Initialize LBR
+  if (nLBREntries > 0){
+
+    val lbr = Module(new LBR)
+    lbr.io.commit := rob.io.commit
+    for (i <- 0 until nLBREntries){
+      csr.io.lbr(i).from := lbr.io.lbr_entries(i).from
+      csr.io.lbr(i).to := lbr.io.lbr_entries(i).to
+      csr.io.lbr(i).m := lbr.io.lbr_entries(i).m
+    }
+
+    dontTouch(lbr.io)
+    println(s"${lbr}")
   }
 
   //****************************************

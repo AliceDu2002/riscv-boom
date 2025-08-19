@@ -52,6 +52,16 @@ class WithNBoomPerfCounters(n: Int) extends Config((site, here, up) => {
 })
 
 
+class WithLBR(n: Int) extends Config((site, here, up) => {
+  case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
+    case tp: BoomTileAttachParams => tp.copy(tileParams = tp.tileParams.copy(core = tp.tileParams.core.copy(
+      nLBREntries = n
+    )))
+    case other => other
+  }
+})
+
+
 class WithSynchronousBoomTiles extends Config((site, here, up) => {
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem), site) map {
     case tp: BoomTileAttachParams => tp.copy(crossingParams = tp.crossingParams.copy(

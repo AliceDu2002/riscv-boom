@@ -91,6 +91,7 @@ class RoCCShim(implicit p: Parameters) extends BoomModule
   })
   io.core.rocc.mem.ordered := false.B
   io.core.rocc.mem.perf.acquire := false.B
+  io.core.rocc.mem.store_pending := false.B
   io.core.rocc.mem.perf.release := false.B
   io.core.rocc.mem.perf.grant := false.B
   io.core.rocc.mem.perf.tlbMiss := false.B
