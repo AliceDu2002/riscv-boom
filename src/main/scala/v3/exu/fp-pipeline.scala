@@ -53,6 +53,12 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
 
     val debug_tsc_reg    = Input(UInt(width=xLen.W))
     val debug_wb_wdata   = Output(Vec(numWakeupPorts, UInt((fLen+1).W)))
+    
+    val perf = Output(new Bundle {
+      val iss_valids = Vec(fpIssueParams.issueWidth, Output(Bool()))
+      val issue_unit_empty = Output(Bool())
+      val wb_fires = Output(Vec(memWidth + 1, Bool()))
+    })
   })
 
   //**********************************
@@ -81,6 +87,14 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
 
   require (exe_units.count(_.readsFrf) == issue_unit.issueWidth)
   require (exe_units.numFrfWritePorts + numLlPorts == numWakeupPorts)
+
+
+  //*************************************************************
+  // Hookup the issue unit perf
+  io.perf.issue_unit_empty := issue_unit.io.perf.event_empty
+  for (i <- 0 until memWidth + 1) {
+    io.perf.wb_fires(i) := false.B
+  }
 
   //*************************************************************
   // Issue window logic
@@ -267,6 +281,8 @@ class FpPipeline(implicit p: Parameters) extends BoomModule with tile.HasFPUPara
     exe_units(w).io.req.bits.kill := io.flush_pipeline
   }
 
+  io.perf.iss_valids := iss_valids
+  
   override def toString: String =
     (BoomCoreStringPrefix("===FP Pipeline===") + "\n"
     + fregfile.toString
