@@ -19,14 +19,6 @@ import boom.v3.ifu._
 import boom.v3.exu._
 import boom.v3.lsu._
 
-/* Superscalar aggregation mode */
-object TopdownPMUMode {
-  val NONE = 0                  // Do not track top-down events
-  val SCALAR_COUNTERS = 1       // Count events separately
-  val ADD_WIRES = 2             // Aggregate each separate event into a multi-bit increment signal
-  val DISTRIBUTED_COUNTERS = 3  // Use local counter and arbitrate each overflow as increment
-}
-
 object TopdownCaseStudy {
   val NONE = 0        // Normal evaluation
   val BASE = 1        // Track uops issued from each execution unit
