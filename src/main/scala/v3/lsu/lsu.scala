@@ -53,6 +53,7 @@ import boom.v3.common._
 import boom.v3.exu.{BrUpdateInfo, Exception, FuncUnitResp, CommitSignals, ExeUnitResp}
 import boom.v3.util.{BoolToChar, AgePriorityEncoder, IsKilledByBranch, GetNewBrMask, WrapInc, IsOlder, UpdateBrMask}
 
+
 class LSUExeIO(implicit p: Parameters) extends BoomBundle()(p)
 {
   // The "resp" of the maddrcalc is really a "req" to the LSU
@@ -862,6 +863,15 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
         "[lsu] Incoming store is overwriting a valid address")
 
     }
+
+    val marq = Module(new mar(fifo_log2 = 5))
+    marq.io.mem_access := dmem_req_fire(w)
+    marq.io.addr       := dmem_req(w).bits.addr
+    marq.io.is_ld      := dmem_req(w).bits.uop.uses_ldq
+    marq.io.is_st      := dmem_req(w).bits.uop.uses_stq || dmem_req(w).bits.uop.is_amo
+
+    val mar_full = marq.io.full
+    dontTouch(mar_full)
 
     //-------------------------------------------------------------
     // Write data into the STQ
