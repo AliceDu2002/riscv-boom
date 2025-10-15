@@ -126,7 +126,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
                             1,
                             1,
                             Seq(true))) // The jmp unit is always bypassable
-  pregfile.io := DontCare // Only use the IO if enableSFBOpt
+  pregfile.io := DontCare // Only use the IO if enableSFBOptm
 
   // wb arbiter for the 0th ll writeback
   // TODO: should this be a multi-arb?
@@ -385,6 +385,8 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   val icache_blocked = !io.ifu.fetchpacket.valid && io.ifu.perf.refill_valid
   csr.io.counters foreach { c => c.inc := RegNext(perfEvents.evaluate(c.eventSel))
   }
+
+  io.lsu.mar_enable := csr.io.customCSRs(custom_csrs.mar_enable_idx).value
 
   //****************************************
   // Time Stamp Counter & Retired Instruction Counter

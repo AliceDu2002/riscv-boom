@@ -9,5 +9,3 @@ Here's a short list of TODO ideas:
    * Add data prefetchers.
 
    * Allow for under-provisioned register file ports.
-
-   * test multiple login
