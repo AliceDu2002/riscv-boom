@@ -12,12 +12,18 @@ class mar(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
     val is_ld      = Input(Bool())
     val is_st      = Input(Bool())
 
+    val first_addr  = Output(UInt(coreMaxAddrBits.W))
+
     val full       = Output(Bool())
   })
 
   val fifo_depth = 1 << fifo_log2
 
   val data = Reg(Vec(fifo_depth, UInt(coreMaxAddrBits.W)))
+
+  val rd_idx = RegInit(0.U((fifo_log2 + 1).W))
+  val first_addr = data(rd_idx(fifo_log2-1, 0))
+  io.first_addr := first_addr
   dontTouch(data)
 
   // allocator indices

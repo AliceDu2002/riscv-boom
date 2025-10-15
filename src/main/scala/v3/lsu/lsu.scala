@@ -836,17 +836,6 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       dmem_req(w).bits.uop.mem_signed := hella_req.signed
       dmem_req(w).bits.is_hella       := true.B
     }
-
-    // connect the request address signal to core
-    // Track most recent load/store addresses
-    val lastAddr  = RegInit(0.U(paddrBits.W))
-
-    when (io.dmem.req.fire) {
-      lastAddr := io.dmem.req.bits(0).bits.addr
-    }
-
-    // Export through LSUCoreIO
-    io.core.last_addr  := lastAddr
     
     //-------------------------------------------------------------
     // Write Addr into the LAQ/SAQ
@@ -885,7 +874,18 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
     marq.io.is_st      := dmem_req(w).bits.uop.uses_stq || dmem_req(w).bits.uop.is_amo
 
     val mar_full = marq.io.full
+    val mar_first_addr = marq.io.first_addr
     dontTouch(mar_full)
+    dontTouch(mar_first_addr)
+
+    // connect the request address signal to core
+    // Track most recent load/store addresses
+    val lastAddr  = RegInit(0.U(paddrBits.W))
+
+    lastAddr := mar_first_addr
+
+    // Export through LSUCoreIO
+    io.core.last_addr  := lastAddr
 
     //-------------------------------------------------------------
     // Write data into the STQ

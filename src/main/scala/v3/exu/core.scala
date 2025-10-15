@@ -393,7 +393,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   // Find your custom CSR by matching its ID
   val last_addr_idx = custom_csrs.lastAddrIndex
   csr.io.customCSRs(last_addr_idx).set := true.B
-  csr.io.customCSRs(last_addr_idx).sdata := 5.U(xLen.W)
+  csr.io.customCSRs(last_addr_idx).sdata := lastAddr
 
   //****************************************
   // Time Stamp Counter & Retired Instruction Counter
