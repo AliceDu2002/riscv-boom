@@ -34,6 +34,7 @@ import chisel3._
 import chisel3.util._
 
 import org.chipsalliance.cde.config.Parameters
+import freechips.rocketchip.rocket.{TopdownPMUMode,TopdownEventSets}
 import freechips.rocketchip.rocket.Instructions._
 import freechips.rocketchip.tile.{TraceBundle}
 import freechips.rocketchip.rocket.{Causes, PRV, TracedInstruction}
@@ -242,33 +243,136 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   }
 
   //-------------------------------------------------------------
+  // Pull out instructions and send to the Decoders
+  // Moved up here because dec_fbundle used in perfEvents
+
+  io.ifu.fetchpacket.ready := dec_ready
+  val dec_fbundle = io.ifu.fetchpacket.bits
+
+  //-------------------------------------------------------------
   // Uarch Hardware Performance Events (HPEs)
 
-  val perfEvents = new freechips.rocketchip.rocket.EventSets(Seq(
-    new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
-      ("exception", () => rob.io.com_xcpt.valid),
-      ("nop",       () => false.B),
-      ("nop",       () => false.B),
-      ("nop",       () => false.B))),
+  // =========================
+  // TMA event support signals
+  // =========================
 
-    new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
-//      ("I$ blocked",                        () => icache_blocked),
-      ("nop",                               () => false.B),
-      ("branch misprediction",              () => b2.mispredict),
-      ("control-flow target misprediction", () => b2.mispredict &&
-                                                  b2.cfi_type === CFI_JALR),
-      ("flush",                             () => rob.io.flush.valid),
-      ("branch resolved",                   () => b2.valid)
-    )),
+  // Perf recovering cycles
+  val recovering = RegInit(false.B)
+  when (io.ifu.sfence.valid || io.ifu.redirect_val || io.ifu.redirect_flush || rob.io.flush.valid) {
+    recovering := true.B
+  }
 
-    new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
-      ("I$ miss",     () => io.ifu.perf.acquire),
-      ("D$ miss",     () => io.lsu.perf.acquire),
-      ("D$ release",  () => io.lsu.perf.release),
-      ("ITLB miss",   () => io.ifu.perf.tlbMiss),
-      ("DTLB miss",   () => io.lsu.perf.tlbMiss),
-      ("L2 TLB miss", () => io.ptw.perf.l2miss)))))
-  val csr = Module(new freechips.rocketchip.rocket.CSRFile(perfEvents, boomParams.customCSRs.decls))
+  // Clear recovery state once fetchpacket is valid again
+  when (io.ifu.fetchpacket.valid) {
+    recovering := false.B
+  }
+
+  // Exe units always fire when issue is valid.
+  val exe_req_fire = iss_valids ++ fp_pipeline.io.perf.iss_valids
+  exe_units.foreach(unit => println(s"EXE UNIT: ${unit.toString}"))
+  println(s"Exe units fire: ${exe_req_fire.length}!")
+  println(s"iss_valids: ${iss_valids}!")
+  println(s"fp_pipeline.io.perf.iss_valids: ${fp_pipeline.io.perf.iss_valids}!")
+
+  val fpIssueParams = issueParams.find(_.iqType == IQT_FP.litValue).get
+  // Issue units empty
+  val issue_units_empty = issue_units.map(_.io.perf.event_empty) :+ fp_pipeline.io.perf.issue_unit_empty
+
+  println(s"Issue units empty: ${issue_units_empty.length}!")
+  println(s"issue_units.map: ${ issue_units.map(_.io.perf.event_empty)}!")
+  println(s"fp_pipeline.io.perf.issue_unit_empty ${fp_pipeline.io.perf.issue_unit_empty}!")
+
+  val issue_dcache_blocked = Wire(Vec(issue_units.length + 1, Bool()))
+  var idx = 0
+  for ((empty, i) <- issue_units.map(_.io.perf.event_empty).zipWithIndex) {
+    val width = issue_units(i).issueWidth
+    val fires = exe_req_fire.slice(idx, idx + width)
+    val nothing_fired = !fires.reduce(_ || _)
+    issue_dcache_blocked(i) := nothing_fired && io.lsu.perf.outstanding
+    idx += width
+  }
+
+  // Handle fp pipeline (last unit)
+  val fp_width = fpIssueParams.issueWidth
+  val fp_fires = exe_req_fire.slice(idx, idx + fp_width)
+  val fp_nothing_fired = !fp_fires.reduce(_ || _)
+  issue_dcache_blocked.last := fp_nothing_fired && io.lsu.perf.outstanding
+
+  val numTrue = PopCount(issue_dcache_blocked)
+  val dcache_blocked = Wire(Vec(retireWidth, Bool()))
+  for (i <- 0 until retireWidth) {
+    dcache_blocked(i) := (i.U < numTrue)
+  }
+
+  // performance event monitoring
+  val perfEvents = new TopdownEventSets(boomParams.topdownCounterMode, Seq(
+    Seq(
+      new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+        ("exception", () => rob.io.com_xcpt.valid),
+        ("nop",       () => false.B),
+        ("nop",       () => false.B),
+        ("nop",       () => false.B)))
+    ),
+
+    Seq(
+      new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+        ("nop",                               () => false.B),
+        ("branch misprediction",              () => b2.mispredict),
+        ("control-flow target misprediction", () => b2.mispredict &&
+                                                    b2.cfi_type === CFI_JALR),
+        ("flush",                             () => rob.io.flush.valid),
+        ("branch resolved",                   () => b2.valid)
+      )),
+    ),
+
+    Seq(
+      new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+        ("I$ miss",     () => io.ifu.perf.acquire),
+        ("D$ miss",     () => io.lsu.perf.acquire),
+        ("D$ release",  () => io.lsu.perf.release),
+        ("ITLB miss",   () => io.ifu.perf.tlbMiss),
+        ("DTLB miss",   () => io.lsu.perf.tlbMiss),
+        ("L2 TLB miss", () => io.ptw.perf.l2miss)
+      ))
+    ),
+    
+    Seq(
+      new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+        ("I$ blocked",     () => icache_blocked),
+        ("recovering",     () => recovering)
+      ))
+    ),
+
+    // Corewidth and retirewidth are not always the same?
+    Seq.tabulate(coreWidth)(x => // for each corewidth
+      new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+        ("fetch bubble" + x, () => !recovering  && (!io.ifu.fetchpacket.valid || !dec_fbundle.uops(x).valid)),
+        ("uops dispatched", () => dec_fire(x)),
+      ))
+    ),
+
+    Seq.tabulate(retireWidth)(x => // for each retirewidth
+      new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+        ("uops retired" + x, () => rob.io.commit.valids(x)),
+        ("fence" + x, () => rob.io.commit.valids(x) && rob.io.commit.uops(x).is_fence || rob.io.commit.uops(x).is_fencei),
+        ("D$ blocked" + x, () => dcache_blocked.asUInt(x))
+      ))
+    ),
+    Seq.tabulate(exe_units.length)(x => // for each issue width
+      new freechips.rocketchip.rocket.EventSet((mask, hits) => (mask & hits).orR, Seq(
+        ("uops issued" + x, () => exe_req_fire(x))
+      ))
+    ),
+
+  ), reset.asBool).toSuperscalarEventSets
+
+  println(s"perfEvents: ${perfEvents.eventSets.length} event sets, " +
+          s"{perfEvents}")
+
+  perfEvents.dump()
+
+  println(s"Creating csr: ${boomParams.customCSRs.decls.length} custom CSRs and perfEvents ${perfEvents} event sets.")
+  val csr = Module(new freechips.rocketchip.rocket.SuperscalarCSRFile(perfEvents, boomParams.customCSRs.decls))
   csr.io.inst foreach { c => c := DontCare }
   csr.io.rocc_interrupt := io.rocc.interrupt
   csr.io.mhtinst_read_pseudo := false.B
@@ -278,9 +382,11 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
 
   (custom_csrs.csrs zip csr.io.customCSRs).map { case (lhs, rhs) => lhs <> rhs }
 
-  //val icache_blocked = !(io.ifu.fetchpacket.valid || RegNext(io.ifu.fetchpacket.valid))
-  val icache_blocked = false.B
-  csr.io.counters foreach { c => c.inc := RegNext(perfEvents.evaluate(c.eventSel)) }
+  val icache_blocked = !io.ifu.fetchpacket.valid && io.ifu.perf.refill_valid
+  csr.io.counters foreach { c => c.inc := RegNext(perfEvents.evaluate(c.eventSel))
+  }
+
+  io.lsu.mar_enable := csr.io.customCSRs(custom_csrs.mar_enable_idx).value
 
   //****************************************
   // Time Stamp Counter & Retired Instruction Counter
@@ -349,7 +455,9 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
         "Load/Store Unit Size  : " + numLdqEntries + "/" + numStqEntries,
         "Num Int Phys Registers: " + numIntPhysRegs,
         "Num FP  Phys Registers: " + numFpPhysRegs,
-        "Max Branch Count      : " + maxBrCount)
+        "Max Branch Count      : " + maxBrCount,
+        "Num PerfCounters      : " + nPerfCounters,
+        "Topdown PMU Mode      : " + boomParams.topdownCounterMode)
     + iregfile.toString + "\n"
     + BoomCoreStringPrefix(
         "Num Slow Wakeup Ports : " + numIrfWritePorts,
@@ -497,9 +605,10 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
 
   //-------------------------------------------------------------
   // Pull out instructions and send to the Decoders
+  // Moved up to performance event definitions
 
-  io.ifu.fetchpacket.ready := dec_ready
-  val dec_fbundle = io.ifu.fetchpacket.bits
+  //io.ifu.fetchpacket.ready := dec_ready
+  //val dec_fbundle = io.ifu.fetchpacket.bits
 
   //-------------------------------------------------------------
   // Decoders
@@ -1012,6 +1121,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
 
   // Extra I/O
   // Delay retire/exception 1 cycle
+  // PopCount sums the number of 1's
   csr.io.retire    := RegNext(PopCount(rob.io.commit.arch_valids.asUInt))
   csr.io.exception := RegNext(rob.io.com_xcpt.valid)
   // csr.io.pc used for setting EPC during exception or CSR.io.trace.

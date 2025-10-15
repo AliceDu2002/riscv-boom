@@ -12,3 +12,5 @@ lib
 /out/
 util/csmith/output/
 util/csmith/csmith/
+.metals
+.vscode

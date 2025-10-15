@@ -63,6 +63,8 @@ class FetchBuffer(implicit p: Parameters) extends BoomModule
 
   val maybe_full = RegInit(false.B)
 
+  
+
   //-------------------------------------------------------------
   // **** Enqueue Uops ****
   //-------------------------------------------------------------

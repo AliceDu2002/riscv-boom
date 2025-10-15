@@ -820,7 +820,8 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
 
   io.lsu.perf.release := edge.done(tl_out.c)
   io.lsu.perf.acquire := edge.done(tl_out.a)
-
+  io.lsu.perf.outstanding := mshrs.io.perf.active
+  
   // load data gen
   val s2_data_word_prebypass = widthMap(w => s2_data_muxed(w) >> Cat(s2_word_idx(w), 0.U(log2Ceil(coreDataBits).W)))
   val s2_data_word = Wire(Vec(memWidth, UInt()))
