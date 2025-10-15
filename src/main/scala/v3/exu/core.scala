@@ -126,7 +126,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
                             1,
                             1,
                             Seq(true))) // The jmp unit is always bypassable
-  pregfile.io := DontCare // Only use the IO if enableSFBOptm
+  pregfile.io := DontCare // Only use the IO if enableSFBOpt
 
   // wb arbiter for the 0th ll writeback
   // TODO: should this be a multi-arb?
@@ -371,14 +371,18 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
 
   perfEvents.dump()
 
+  // connect the last_addr from lsu to boom core
+  val lastAddr  = io.lsu.last_addr
+
   println(s"Creating csr: ${boomParams.customCSRs.decls.length} custom CSRs and perfEvents ${perfEvents} event sets.")
+  // csr instantiation
   val csr = Module(new freechips.rocketchip.rocket.SuperscalarCSRFile(perfEvents, boomParams.customCSRs.decls))
   csr.io.inst foreach { c => c := DontCare }
   csr.io.rocc_interrupt := io.rocc.interrupt
   csr.io.mhtinst_read_pseudo := false.B
 
   val custom_csrs = Wire(new BoomCustomCSRs)
-  custom_csrs.csrs.foreach { c => c.stall := false.B; c.set := false.B; c.sdata := DontCare }
+  custom_csrs.csrs.foreach { c => c.stall := false.B; c.set := false.B; c.sdata := DontCare}
 
   (custom_csrs.csrs zip csr.io.customCSRs).map { case (lhs, rhs) => lhs <> rhs }
 
@@ -386,7 +390,10 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   csr.io.counters foreach { c => c.inc := RegNext(perfEvents.evaluate(c.eventSel))
   }
 
-  io.lsu.mar_enable := csr.io.customCSRs(custom_csrs.mar_enable_idx).value
+  // Find your custom CSR by matching its ID
+  val last_addr_idx = custom_csrs.lastAddrIndex
+  csr.io.customCSRs(last_addr_idx).set := true.B
+  csr.io.customCSRs(last_addr_idx).sdata := 5.U(xLen.W)
 
   //****************************************
   // Time Stamp Counter & Retired Instruction Counter

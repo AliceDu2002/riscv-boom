@@ -53,7 +53,6 @@ import boom.v3.common._
 import boom.v3.exu.{BrUpdateInfo, Exception, FuncUnitResp, CommitSignals, ExeUnitResp}
 import boom.v3.util.{BoolToChar, AgePriorityEncoder, IsKilledByBranch, GetNewBrMask, WrapInc, IsOlder, UpdateBrMask}
 
-
 class LSUExeIO(implicit p: Parameters) extends BoomBundle()(p)
 {
   // The "resp" of the maddrcalc is really a "req" to the LSU
@@ -157,7 +156,8 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p)
     val outstanding = Bool()
   })
 
-  val mar_enable  = Input(Bool())
+  // add address information to core to be connected to csr
+  val last_addr  = Output(UInt(paddrBits.W))
 }
 
 class LSUIO(implicit p: Parameters, edge: TLEdgeOut) extends BoomBundle()(p)
@@ -836,6 +836,17 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       dmem_req(w).bits.is_hella       := true.B
     }
 
+    // connect the request address signal to core
+    // Track most recent load/store addresses
+    val lastAddr  = RegInit(0.U(paddrBits.W))
+
+    when (io.dmem.req.fire) {
+      lastAddr := io.dmem.req.bits(0).bits.addr
+    }
+
+    // Export through LSUCoreIO
+    io.core.last_addr  := lastAddr
+    
     //-------------------------------------------------------------
     // Write Addr into the LAQ/SAQ
     when (will_fire_load_incoming(w) || will_fire_load_retry(w))
@@ -865,43 +876,6 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
         "[lsu] Incoming store is overwriting a valid address")
 
     }
-
-    //-------------------------------------------------------------
-    // Memory Access Record 
-
-    val marq = Module(new mar(fifo_log2 = 5))
-
-    for (w <- 0 until memWidth) {
-      val fire = dmem_req_fire(w)
-      val req  = dmem_req(w).bits
-      val u    = req.uop
-
-      val isLoad  = fire && u.uses_ldq
-      val isStore = fire && (u.uses_stq || u.is_amo)
-      val isAMO   = fire && u.is_amo
-      val isHella = fire && req.is_hella                
-
-      // load in values for the MAR
-      val rec = WireInit(0.U.asTypeOf(new MemAccessRecord))
-
-      rec.pc     := u.debug_pc
-      rec.addr   := req.addr
-      rec.wdata  := req.data
-      rec.isLd   := isLoad
-      rec.isSt   := isStore
-      rec.isAMO  := isAMO
-      rec.isHella:= isHella
-      rec.robIdx := u.rob_idx
-      rec.ldqIdx := u.ldq_idx
-      rec.stqIdx := u.stq_idx
-
-      marq.io.mem_access := fire
-      marq.io.mem_record := rec
-    }
-
-    val mar_full = marq.io.full
-    marq.io.enable := io.core.mar_enable
-    dontTouch(mar_full)
 
     //-------------------------------------------------------------
     // Write data into the STQ
@@ -1523,7 +1497,6 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
           io.core.tsc_reg, uop.uopc, uop.mem_cmd, uop.mem_size, addr, stdata, wbdata)
       }
     }
-    printf("Mar Enable %x\n", io.core.mar_enable)
 
     temp_stq_commit_head = Mux(commit_store,
                                WrapInc(temp_stq_commit_head, numStqEntries),
