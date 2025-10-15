@@ -394,6 +394,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   val last_addr_idx = custom_csrs.lastAddrIndex
   csr.io.customCSRs(last_addr_idx).set := true.B
   csr.io.customCSRs(last_addr_idx).sdata := lastAddr
+  io.lsu.mar_enable := csr.io.customCSRs(custom_csrs.mar_enable_idx).value
 
   //****************************************
   // Time Stamp Counter & Retired Instruction Counter

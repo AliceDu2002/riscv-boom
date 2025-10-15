@@ -201,15 +201,10 @@ class BoomCustomCSRs(implicit p: Parameters) extends freechips.rocketchip.tile.C
   def disableOOO = getOrElse(chickenCSR, _.value(3), true.B)
   def marchid = CustomCSR.constant(CSRs.marchid, BigInt(2))
 
-  // CSR ID/address for your last memory address
-  val lastAddrId = 0xBC0 
+  def mar_enable_csr = CustomCSR(0xBC0, BigInt(0x1), Some(BigInt(0)))
+  def mar_enable_idx = super.decls.length + 1
 
-  // Define a new read-only CustomCSR
-  val lastAddrCSR = CustomCSR(lastAddrId, mask = BigInt("FFFFFFFFFFFFFFFF", 16), init = None)
-  def lastAddrIndex: Int = super.decls.length + 1
-
-  // Add to the declaration list
-  override def decls: Seq[CustomCSR] = super.decls ++ Seq(marchid, lastAddrCSR)
+  override def decls: Seq[CustomCSR] = super.decls :+ marchid :+ mar_enable_csr
 }
 
 /**
