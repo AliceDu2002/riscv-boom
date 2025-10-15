@@ -386,6 +386,8 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   csr.io.counters foreach { c => c.inc := RegNext(perfEvents.evaluate(c.eventSel))
   }
 
+  io.lsu.mar_enable := csr.io.customCSRs(custom_csrs.mar_enable_idx).value
+
   //****************************************
   // Time Stamp Counter & Retired Instruction Counter
   // (only used for printf and vcd dumps - the actual counters are in the CSRFile)

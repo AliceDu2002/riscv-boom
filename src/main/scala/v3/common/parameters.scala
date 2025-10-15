@@ -113,7 +113,8 @@ case class BoomCoreParams(
   /* debug stuff */
   enableCommitLogPrintf: Boolean = false,
   enableBranchPrintf: Boolean = false,
-  enableMemtracePrintf: Boolean = false,
+  //enableMemtracePrintf: Boolean = false,
+  enableMemtracePrintf: Boolean = true,
 // DOC include end: BOOM Parameters
 ) extends freechips.rocketchip.tile.CoreParams
 {
@@ -200,7 +201,10 @@ class BoomCustomCSRs(implicit p: Parameters) extends freechips.rocketchip.tile.C
   def disableOOO = getOrElse(chickenCSR, _.value(3), true.B)
   def marchid = CustomCSR.constant(CSRs.marchid, BigInt(2))
 
-  override def decls: Seq[CustomCSR] = super.decls :+ marchid
+  def mar_enable_csr = CustomCSR(0xBC0, BigInt(0x1), Some(BigInt(0)))
+  def mar_enable_idx = super.decls.length + 1
+
+  override def decls: Seq[CustomCSR] = super.decls :+ marchid :+ mar_enable_csr
 }
 
 /**
