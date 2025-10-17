@@ -868,26 +868,6 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
     }
 
-    val marq = Module(new mar(fifo_log2 = 5))
-    marq.io.mem_access := dmem_req_fire(w)
-    marq.io.addr       := dmem_req(w).bits.addr
-    marq.io.is_ld      := dmem_req(w).bits.uop.uses_ldq
-    marq.io.is_st      := dmem_req(w).bits.uop.uses_stq || dmem_req(w).bits.uop.is_amo
-
-    val mar_full = marq.io.full
-    val mar_first_addr = marq.io.first_addr
-    dontTouch(mar_full)
-    dontTouch(mar_first_addr)
-
-    // connect the request address signal to core
-    // Track most recent load/store addresses
-    val lastAddr  = RegInit(0.U(paddrBits.W))
-
-    lastAddr := mar_first_addr
-
-    // Export through LSUCoreIO
-    io.core.last_addr  := lastAddr
-
     //-------------------------------------------------------------
     // Memory Access Record 
 
@@ -923,7 +903,17 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
     val mar_full = marq.io.full
     marq.io.enable := io.core.mar_enable
+
+    val mar_first_addr = marq.io.first_addr
+    // connect the request address signal to core
+    // Track most recent load/store addresses
+    val lastAddr  = RegInit(0.U(paddrBits.W))
+    lastAddr := mar_first_addr
+    // Export through LSUCoreIO
+    io.core.last_addr  := lastAddr
+    
     dontTouch(mar_full)
+    dontTouch(mar_first_addr)
 
     //-------------------------------------------------------------
     // Write data into the STQ
