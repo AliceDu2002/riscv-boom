@@ -387,6 +387,9 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   }
 
   io.lsu.mar_enable := csr.io.customCSRs(custom_csrs.mar_enable_idx).value
+  csr.io.customCSRs(custom_csrs.mar_head_idx).set   := true.B
+  csr.io.customCSRs(custom_csrs.mar_head_idx).sdata := io.lsu.mar_first_addr
+
 
   //****************************************
   // Time Stamp Counter & Retired Instruction Counter

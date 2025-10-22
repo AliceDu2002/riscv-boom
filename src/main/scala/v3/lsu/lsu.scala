@@ -157,6 +157,7 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p)
   })
 
   val mar_enable  = Input(Bool())
+  val mar_first_addr = Output(UInt(coreMaxAddrBits.W))
 }
 
 class LSUIO(implicit p: Parameters, edge: TLEdgeOut) extends BoomBundle()(p)
@@ -900,6 +901,8 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
     val mar_full = marq.io.full
     marq.io.enable := io.core.mar_enable
+    io.core.mar_first_addr := marq.io.first_addr
+
     dontTouch(mar_full)
 
     //-------------------------------------------------------------

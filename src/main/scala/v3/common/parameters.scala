@@ -204,7 +204,10 @@ class BoomCustomCSRs(implicit p: Parameters) extends freechips.rocketchip.tile.C
   def mar_enable_csr = CustomCSR(0xBC0, BigInt(0x1), Some(BigInt(0)))
   def mar_enable_idx = super.decls.length + 1
 
-  override def decls: Seq[CustomCSR] = super.decls :+ marchid :+ mar_enable_csr
+  def mar_head_csr = CustomCSR(0xBD0, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
+  def mar_head_idx = mar_enable_idx + 1
+
+  override def decls: Seq[CustomCSR] = super.decls :+ marchid :+ mar_enable_csr :+ mar_head_csr
 }
 
 /**

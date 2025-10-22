@@ -25,6 +25,7 @@ class mar(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
     val mem_record = Input(new MemAccessRecord)
 
     val full       = Output(Bool())
+    val first_addr = Output(UInt(coreMaxAddrBits.W))
   })
 
   val fifo_depth = 1 << fifo_log2
@@ -36,7 +37,7 @@ class mar(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
 
   // allocator indices
   val wr_idx = RegInit(0.U((fifo_log2 + 1).W))
-  val rd_idx = RegInit(0.U((fifo_log2 + 1).W)) // not used yet
+  val rd_idx = RegInit(0.U((fifo_log2 + 1).W)) 
   
   // level-pulse converter
   val tog_p  = RegNext(wr_idx(fifo_log2), false.B)
@@ -48,4 +49,5 @@ class mar(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
   }
   
   io.full := wr_idx(fifo_log2) ^ tog_p
+  io.first_addr := data(rd_idx(fifo_log2-1, 0)).addr
 }
