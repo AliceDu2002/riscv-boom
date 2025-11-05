@@ -90,7 +90,7 @@ case class BoomCoreParams(
   nL2TLBEntries: Int = 512,
   val nPTECacheEntries: Int = 8, // TODO: check
   nL2TLBWays: Int = 1,
-  nLocalInterrupts: Int = 0,
+  nLocalInterrupts: Int = 1,
   useNMI: Boolean = false,
   useAtomics: Boolean = true,
   useDebug: Boolean = true,
@@ -204,7 +204,16 @@ class BoomCustomCSRs(implicit p: Parameters) extends freechips.rocketchip.tile.C
   def mar_enable_csr = CustomCSR(0xBC0, BigInt(0x1), Some(BigInt(0)))
   def mar_enable_idx = super.decls.length + 1
 
-  override def decls: Seq[CustomCSR] = super.decls :+ marchid :+ mar_enable_csr
+  def mar_head_csr = CustomCSR(0xBD0, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
+  def mar_head_idx = mar_enable_idx + 1
+
+  def blacklist_fixed_addr_csr = CustomCSR(0xBE0, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
+  def blacklist_fixed_addr_idx = mar_head_idx + 1
+
+  def blacklist_fifo_addr_csr = CustomCSR(0xBF0, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
+  def blacklist_fifo_addr_idx = blacklist_fixed_addr_idx + 1
+
+  override def decls: Seq[CustomCSR] = super.decls :+ marchid :+ mar_enable_csr :+ mar_head_csr :+ blacklist_fixed_addr_csr :+ blacklist_fifo_addr_csr
 }
 
 /**

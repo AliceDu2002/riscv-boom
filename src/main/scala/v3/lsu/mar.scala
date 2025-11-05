@@ -20,32 +20,57 @@ class MemAccessRecord(implicit p: Parameters) extends BoomBundle {
 
 class mar(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
   val io = IO(new Bundle {
-    val enable     = Input(Bool())
-    val mem_access = Input(Bool())
-    val mem_record = Input(new MemAccessRecord)
+    val enable      = Input(Bool())
+    val csr_data_read = Input(Bool())
+    val mem_access  = Input(Bool())
+    val mem_record  = Input(new MemAccessRecord)
 
-    val full       = Output(Bool())
+    val full        = Output(Bool())
+    val first_addr  = Output(UInt(coreMaxAddrBits.W))
   })
 
   val fifo_depth = 1 << fifo_log2
 
   val data = RegInit(VecInit(Seq.fill(fifo_depth)(0.U.asTypeOf(new MemAccessRecord))))
-
-  // prevent optimization away since doesnt connect to anything
   dontTouch(data)
 
   // allocator indices
   val wr_idx = RegInit(0.U((fifo_log2 + 1).W))
-  val rd_idx = RegInit(0.U((fifo_log2 + 1).W)) // not used yet
+  val rd_idx = RegInit(0.U((fifo_log2 + 1).W)) 
   
-  // level-pulse converter
-  val tog_p  = RegNext(wr_idx(fifo_log2), false.B)
-
+  io.full := (wr_idx(fifo_log2 - 1, 0) === rd_idx(fifo_log2 - 1, 0)) && 
+              (wr_idx(fifo_log2) =/= rd_idx(fifo_log2))
+  val empty = (wr_idx === rd_idx)
+  val a = true.B
+  
   // saves value on every mem_access
-  when (io.mem_access && io.enable) {
+  when (io.mem_access && io.enable && !io.full) {
     wr_idx                       := wr_idx +% 1.U
     data(wr_idx(fifo_log2-1, 0)) := io.mem_record
-  }
+  } 
   
-  io.full := wr_idx(fifo_log2) ^ tog_p
+  // below state machine increments through 3 stages. SW requires this to remain synchronized
+  val counter = RegInit(0.U(2.W))
+
+  // stage1 -> addr (64 bit)
+  // stage2 -> pc (64 bit)
+  // stage3 -> single bit values (4 bit)
+
+  when (io.csr_data_read) {
+    when (counter === 2.U) {
+      rd_idx := rd_idx +% 1.U
+      counter := 0.U
+    } .otherwise {
+      counter := counter + 1.U
+    }
+  }
+  // if empty -> give back all 0's (detectable from sw and NULL (0) is invalid anyways
+  val rec = data(rd_idx(fifo_log2 - 1, 0))
+  val packed = Cat(rec.isLd, rec.isSt, rec.isAMO, rec.isHella)
+
+  io.first_addr := MuxCase(0.U(coreMaxAddrBits.W), Seq(
+    (counter === 0.U) -> rec.addr,
+    (counter === 1.U) -> rec.pc,
+    (counter === 2.U) -> Cat(0.U((coreMaxAddrBits - 4).W), packed)
+  ))
 }
