@@ -176,6 +176,21 @@ class BoomTileModuleImp(outer: BoomTile) extends BaseTileModuleImp(outer){
   outer.frontend.module.io.cpu <> core.io.ifu
   core.io.lsu <> lsu.io.core
 
+  // Add another hardware-triggered interrupt
+  val fifo_full_reg = RegNext(lsu.io.core.fifo_full, init=false.B)
+
+  // Add another hardware-triggered interrupt
+  val int_bundle = Wire(new TileInterrupts()(outer.p))
+  outer.decodeCoreInterrupts(int_bundle)
+
+  // Drive one local interrupt line from fifo_full
+  int_bundle.lip(0) := fifo_full_reg
+
+  // Connect interrupts to core
+  core.io.interrupts := int_bundle
+
+  dontTouch(int_bundle) 
+
   //fpuOpt foreach { fpu => core.io.fpu <> fpu.io } RocketFpu - not needed in boom
   core.io.rocc := DontCare
 

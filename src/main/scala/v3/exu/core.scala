@@ -386,6 +386,10 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   csr.io.counters foreach { c => c.inc := RegNext(perfEvents.evaluate(c.eventSel))
   }
 
+  io.lsu.mar_enable := csr.io.customCSRs(custom_csrs.mar_enable_idx).value
+  csr.io.customCSRs(custom_csrs.mar_head_idx).set   := true.B
+  csr.io.customCSRs(custom_csrs.mar_head_idx).sdata := io.lsu.mar_first_addr
+
   //****************************************
   // Time Stamp Counter & Retired Instruction Counter
   // (only used for printf and vcd dumps - the actual counters are in the CSRFile)
@@ -1111,6 +1115,18 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   csr.io.rw.addr        := csr_exe_unit.io.iresp.bits.uop.csr_addr
   csr.io.rw.cmd         := freechips.rocketchip.rocket.CSR.maskCmd(csr_exe_unit.io.iresp.valid, csr_rw_cmd)
   csr.io.rw.wdata       := wb_wdata
+
+  val mar_data_read = (csr_rw_cmd === freechips.rocketchip.rocket.CSR.R) && 
+                    (csr.io.rw.wdata === 0.U) &&
+                    (csr.io.rw.addr === "hBD0".U) 
+  io.lsu.mar_data_read := mar_data_read
+
+  io.lsu.blacklist_fixed_en := (csr_rw_cmd === freechips.rocketchip.rocket.CSR.W) && 
+                              (csr.io.rw.addr === "hBE0".U) 
+  io.lsu.blacklist_fixed_addr := csr.io.rw.wdata
+  io.lsu.blacklist_fifo_en := (csr_rw_cmd === freechips.rocketchip.rocket.CSR.W) && 
+                              (csr.io.rw.addr === "hBF0".U) 
+  io.lsu.blacklist_fifo_addr := csr.io.rw.wdata
 
   rob.io.csr_replay.valid := csr_exe_unit.io.iresp.valid && csr.io.rw_stall
   rob.io.csr_replay.bits.uop := csr_exe_unit.io.iresp.bits.uop

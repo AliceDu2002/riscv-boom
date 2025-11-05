@@ -53,7 +53,6 @@ import boom.v3.common._
 import boom.v3.exu.{BrUpdateInfo, Exception, FuncUnitResp, CommitSignals, ExeUnitResp}
 import boom.v3.util.{BoolToChar, AgePriorityEncoder, IsKilledByBranch, GetNewBrMask, WrapInc, IsOlder, UpdateBrMask}
 
-
 class LSUExeIO(implicit p: Parameters) extends BoomBundle()(p)
 {
   // The "resp" of the maddrcalc is really a "req" to the LSU
@@ -156,6 +155,15 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p)
     val tlbMiss = Bool()
     val outstanding = Bool()
   })
+
+  val mar_enable  = Input(Bool())
+  val mar_data_read  = Input(Bool())
+  val mar_first_addr = Output(UInt(coreMaxAddrBits.W))
+  val blacklist_fixed_en = Input(Bool())
+  val blacklist_fixed_addr = Input(UInt(coreMaxAddrBits.W))
+  val blacklist_fifo_en = Input(Bool())
+  val blacklist_fifo_addr = Input(UInt(coreMaxAddrBits.W))
+  val fifo_full = Output(Bool())
 }
 
 class LSUIO(implicit p: Parameters, edge: TLEdgeOut) extends BoomBundle()(p)
@@ -865,39 +873,50 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
     }
 
     //-------------------------------------------------------------
+    // MARQ Blacklist
+    val marq_blacklist = Module(new marq_blacklist(fifo_log2 = 2))
+
+    val fixed_arbiter = RegInit(0.U)
+    fixed_arbiter := fixed_arbiter ^ io.core.blacklist_fixed_en
+
+    marq_blacklist.io.clear := false.B
+    marq_blacklist.io.enq := io.core.blacklist_fifo_addr
+    marq_blacklist.io.enq_valid := io.core.blacklist_fifo_en
+    marq_blacklist.io.fixed0_we := io.core.blacklist_fixed_en & !fixed_arbiter
+    marq_blacklist.io.fixed0_addr_in := io.core.blacklist_fixed_addr
+    marq_blacklist.io.fixed1_we := io.core.blacklist_fixed_en & fixed_arbiter
+    marq_blacklist.io.fixed1_addr_in := io.core.blacklist_fixed_addr
+    marq_blacklist.io.lookup_addr := dmem_req(w).bits.addr 
+
+
+    //-------------------------------------------------------------
     // Memory Access Record 
 
-    val marq = Module(new mar(fifo_log2 = 5))
+    val marq = Module(new mar(fifo_log2 = 5))            
 
-    for (w <- 0 until memWidth) {
-      val fire = dmem_req_fire(w)
-      val req  = dmem_req(w).bits
-      val u    = req.uop
+    // load in values for the MAR
+    val rec = WireInit(0.U.asTypeOf(new MemAccessRecord))
 
-      val isLoad  = fire && u.uses_ldq
-      val isStore = fire && (u.uses_stq || u.is_amo)
-      val isAMO   = fire && u.is_amo
-      val isHella = fire && req.is_hella                
+    rec.pc     := dmem_req(w).bits.uop.debug_pc
+    rec.addr   := dmem_req(w).bits.addr
+    rec.wdata  := dmem_req(w).bits.data
+    rec.isLd   := dmem_req_fire(w) && dmem_req(w).bits.uop.uses_ldq
+    rec.isSt   := dmem_req_fire(w) && (dmem_req(w).bits.uop.uses_stq || dmem_req(w).bits.uop.is_amo)
+    rec.isAMO  := dmem_req_fire(w) && dmem_req(w).bits.uop.is_amo
+    rec.isHella:= dmem_req_fire(w) && dmem_req(w).bits.is_hella  
+    rec.robIdx := dmem_req(w).bits.uop.rob_idx
+    rec.ldqIdx := dmem_req(w).bits.uop.ldq_idx
+    rec.stqIdx := dmem_req(w).bits.uop.stq_idx
 
-      // load in values for the MAR
-      val rec = WireInit(0.U.asTypeOf(new MemAccessRecord))
-
-      rec.pc     := u.debug_pc
-      rec.addr   := req.addr
-      rec.wdata  := req.data
-      rec.isLd   := isLoad
-      rec.isSt   := isStore
-      rec.isAMO  := isAMO
-      rec.isHella:= isHella
-      rec.robIdx := u.rob_idx
-      rec.ldqIdx := u.ldq_idx
-      rec.stqIdx := u.stq_idx
-
-      marq.io.mem_access := fire
-      marq.io.mem_record    := rec
-    }
+    marq.io.mem_access := dmem_req_fire(w) & !marq_blacklist.io.blacklist
+    marq.io.mem_record := rec
 
     val mar_full = marq.io.full
+    marq.io.enable := io.core.mar_enable
+    io.core.mar_first_addr := marq.io.first_addr
+    marq.io.csr_data_read := io.core.mar_data_read
+    io.core.fifo_full := mar_full
+
     dontTouch(mar_full)
 
     //-------------------------------------------------------------
