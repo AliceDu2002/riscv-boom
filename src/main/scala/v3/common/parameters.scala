@@ -213,7 +213,10 @@ class BoomCustomCSRs(implicit p: Parameters) extends freechips.rocketchip.tile.C
   def blacklist_fifo_addr_csr = CustomCSR(0xBF0, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
   def blacklist_fifo_addr_idx = blacklist_fixed_addr_idx + 1
 
-  override def decls: Seq[CustomCSR] = super.decls :+ marchid :+ mar_enable_csr :+ mar_head_csr :+ blacklist_fixed_addr_csr :+ blacklist_fifo_addr_csr
+  def mar_mode_csr = CustomCSR(0xBC1, BigInt(0x1), Some(BigInt(0)))
+  def mar_mode_idx = blacklist_fifo_addr_idx + 1
+
+  override def decls: Seq[CustomCSR] = super.decls :+ marchid :+ mar_enable_csr :+ mar_head_csr :+ blacklist_fixed_addr_csr :+ blacklist_fifo_addr_csr :+ mar_mode_csr
 }
 
 /**

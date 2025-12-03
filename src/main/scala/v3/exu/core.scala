@@ -1116,6 +1116,8 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   csr.io.rw.cmd         := freechips.rocketchip.rocket.CSR.maskCmd(csr_exe_unit.io.iresp.valid, csr_rw_cmd)
   csr.io.rw.wdata       := wb_wdata
 
+  val mar_mode = RegNext(csr.io.customCSRs(custom_csrs.mar_mode_idx).value, init=false.B) // false for sample mode; true for interrupt mode
+  io.lsu.mar_mode := mar_mode
   val mar_data_read = (csr_rw_cmd === freechips.rocketchip.rocket.CSR.R) && 
                     (csr.io.rw.wdata === 0.U) &&
                     (csr.io.rw.addr === "hBD0".U) 

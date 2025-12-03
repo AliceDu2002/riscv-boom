@@ -18,7 +18,7 @@ class MemAccessRecord(implicit p: Parameters) extends BoomBundle {
   val stqIdx = UInt(stqAddrSz.W)
 }
 
-class mar(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
+class mar_csr(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
   val io = IO(new Bundle {
     val enable      = Input(Bool())
     val csr_data_read = Input(Bool())
@@ -26,6 +26,7 @@ class mar(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
     val mem_record  = Input(new MemAccessRecord)
 
     val full        = Output(Bool())
+    val empty       = Output(Bool())
     val first_addr  = Output(UInt(coreMaxAddrBits.W))
   })
 
@@ -40,12 +41,18 @@ class mar(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
   
   io.full := (wr_idx(fifo_log2 - 1, 0) === rd_idx(fifo_log2 - 1, 0)) && 
               (wr_idx(fifo_log2) =/= rd_idx(fifo_log2))
-  val empty = (wr_idx === rd_idx)
+  io.empty := (wr_idx === rd_idx)
   val a = true.B
   
   // saves value on every mem_access
   when (io.mem_access && io.enable && !io.full) {
     wr_idx                       := wr_idx +% 1.U
+    data(wr_idx(fifo_log2-1, 0)) := io.mem_record
+  } 
+  // overwrite mechanism
+  when (io.mem_access && io.enable && io.full) {
+    wr_idx                       := wr_idx +% 1.U
+    rd_idx                       := rd_idx +% 1.U
     data(wr_idx(fifo_log2-1, 0)) := io.mem_record
   } 
   
@@ -65,12 +72,62 @@ class mar(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
     }
   }
   // if empty -> give back all 0's (detectable from sw and NULL (0) is invalid anyways
-  val rec = data(rd_idx(fifo_log2 - 1, 0))
-  val packed = Cat(rec.isLd, rec.isSt, rec.isAMO, rec.isHella)
+  val rec     = data(rd_idx(fifo_log2 - 1, 0))
+  val packed  = Cat(rec.isLd, rec.isSt, rec.isAMO, rec.isHella)
+
+  val addr_or_zero  = Mux(io.empty, 0.U, rec.addr)
+  val pc_or_zero    = Mux(io.empty, 0.U, rec.pc)
+  val packed_or_zero = Mux(io.empty,
+    0.U(coreMaxAddrBits.W),
+    Cat(0.U((coreMaxAddrBits - 4).W), packed)
+  )
 
   io.first_addr := MuxCase(0.U(coreMaxAddrBits.W), Seq(
-    (counter === 0.U) -> rec.addr,
-    (counter === 1.U) -> rec.pc,
-    (counter === 2.U) -> Cat(0.U((coreMaxAddrBits - 4).W), packed)
+    (counter === 0.U) -> addr_or_zero,
+    (counter === 1.U) -> pc_or_zero,
+    (counter === 2.U) -> packed_or_zero
   ))
+
+}
+
+class mar(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
+  val io = IO(new Bundle {
+    val enable      = Input(Bool())
+    val mem_access  = Input(Bool())
+    val mem_record  = Input(new MemAccessRecord)
+
+    val full        = Output(Bool())
+    val empty       = Output(Bool())
+
+    val push        = Input(Bool())
+    val push_rec    = Output(new MemAccessRecord)
+  })
+
+  val fifo_depth = 1 << fifo_log2
+
+  val data = RegInit(VecInit(Seq.fill(fifo_depth)(0.U.asTypeOf(new MemAccessRecord))))
+  dontTouch(data)
+
+  // allocator indices
+  val wr_idx = RegInit(0.U((fifo_log2 + 1).W))
+  val rd_idx = RegInit(0.U((fifo_log2 + 1).W)) 
+  
+  io.full := (wr_idx(fifo_log2 - 1, 0) === rd_idx(fifo_log2 - 1, 0)) && 
+              (wr_idx(fifo_log2) =/= rd_idx(fifo_log2))
+  io.empty := (wr_idx === rd_idx)
+  val a = true.B
+  
+  // saves value on every mem_access
+  when (io.mem_access && io.enable && !io.full) {
+    wr_idx                       := wr_idx +% 1.U
+    data(wr_idx(fifo_log2-1, 0)) := io.mem_record
+  } 
+
+  when (io.push) {
+    rd_idx := rd_idx +% 1.U
+  }
+
+  // if empty -> give back all 0's (detectable from sw and NULL (0) is invalid anyways
+  val rec = data(rd_idx(fifo_log2 - 1, 0))
+  io.push_rec := rec
 }

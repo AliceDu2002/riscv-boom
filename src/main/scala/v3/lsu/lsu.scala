@@ -164,6 +164,7 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p)
   val blacklist_fifo_en = Input(Bool())
   val blacklist_fifo_addr = Input(UInt(coreMaxAddrBits.W))
   val fifo_full = Output(Bool())
+  val mar_mode = Input(Bool())
 }
 
 class LSUIO(implicit p: Parameters, edge: TLEdgeOut) extends BoomBundle()(p)
@@ -273,6 +274,76 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
   def widthMap[T <: Data](f: Int => T) = VecInit((0 until memWidth).map(f))
 
+  //-------------------------------------------------------------
+  //-------------------------------------------------------------
+  // MARQ
+  //-------------------------------------------------------------
+  //-------------------------------------------------------------
+
+  // one large marq & multiple small marqs
+  def marqUniSize = 5
+  def marqSize = marqUniSize - log2Ceil(memWidth)
+  val marqUni = Module(new mar_csr(fifo_log2 = marqUniSize))
+  val marqArray = Seq.fill(memWidth)(Module(new mar(fifo_log2 = marqSize)))
+
+  // step 0: enable
+  for(i <- 0 until memWidth) {
+    marqArray(i).io.enable := io.core.mar_enable
+  }
+  marqUni.io.enable := io.core.mar_enable
+
+  // step 1: write into small marqs (inside for loop) 
+
+  // step 2: use arbiter to load data from small marqs to the large one
+  // pull the data from small marqs
+  val arb = Module(new RoundRobinArbiter(memWidth));
+  for(i <- 0 until memWidth) {
+    arb.io.req(i) := !marqArray(i).io.empty
+    marqArray(i).io.push := arb.io.grant(i)
+  }
+  val marRecVec = VecInit(marqArray.map(_.io.push_rec))
+  val marRecWrite = marRecVec(arb.io.grantIndex)
+
+  // push the data to large marq
+  marqUni.io.mem_access := arb.io.grantValid
+  marqUni.io.mem_record := marRecWrite
+
+  // step 3: csr read data from large marq
+  marqUni.io.csr_data_read := io.core.mar_data_read
+  io.core.mar_first_addr := marqUni.io.first_addr
+
+  //--------------------------------------------------
+  // marq full interrupt
+  //--------------------------------------------------
+  val mar_full = marqUni.io.full
+  io.core.fifo_full := Mux(io.core.mar_mode, mar_full, false.B) // mar_full
+  dontTouch(mar_full)
+  
+  //--------------------------------------------------
+  // blacklist module
+  //--------------------------------------------------
+  val marq_blacklist = Module(new marq_blacklist(fifo_log2 = 2, nMem = memWidth))
+  marq_blacklist.io.clear := false.B
+
+  // register write
+  val fixed_arbiter = RegInit(0.U)
+  fixed_arbiter := fixed_arbiter ^ io.core.blacklist_fixed_en
+  marq_blacklist.io.fixed0_we := io.core.blacklist_fixed_en & !fixed_arbiter
+  marq_blacklist.io.fixed0_addr_in := io.core.blacklist_fixed_addr
+  marq_blacklist.io.fixed1_we := io.core.blacklist_fixed_en & fixed_arbiter
+  marq_blacklist.io.fixed1_addr_in := io.core.blacklist_fixed_addr
+
+  // fifo write
+  marq_blacklist.io.enq := io.core.blacklist_fifo_addr
+  marq_blacklist.io.enq_valid := io.core.blacklist_fifo_en
+
+  //---------------------------------------
+  // two options for recording
+  // when enqueue or when dmem_fire
+  //----------------------------------------
+  val MAR_POS: Boolean = false  // false for write back & true for dmem
+  val rec      = VecInit(Seq.fill(memWidth)(0.U.asTypeOf(new MemAccessRecord)))
+  val rec_fire = VecInit(Seq.fill(memWidth)(false.B))
 
   //-------------------------------------------------------------
   //-------------------------------------------------------------
@@ -765,7 +836,6 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
   val s0_executing_loads = WireInit(VecInit((0 until numLdqEntries).map(x=>false.B)))
 
-
   for (w <- 0 until memWidth) {
     dmem_req(w).valid := false.B
     dmem_req(w).bits.uop   := NullMicroOp
@@ -872,52 +942,23 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
     }
 
-    //-------------------------------------------------------------
-    // MARQ Blacklist
-    val marq_blacklist = Module(new marq_blacklist(fifo_log2 = 2))
+    // -----------------------------------------
+    // marq record option 2: record when fire
+    // -----------------------------------------
+    if(MAR_POS) {
+      rec_fire(w) := dmem_req_fire(w)
 
-    val fixed_arbiter = RegInit(0.U)
-    fixed_arbiter := fixed_arbiter ^ io.core.blacklist_fixed_en
-
-    marq_blacklist.io.clear := false.B
-    marq_blacklist.io.enq := io.core.blacklist_fifo_addr
-    marq_blacklist.io.enq_valid := io.core.blacklist_fifo_en
-    marq_blacklist.io.fixed0_we := io.core.blacklist_fixed_en & !fixed_arbiter
-    marq_blacklist.io.fixed0_addr_in := io.core.blacklist_fixed_addr
-    marq_blacklist.io.fixed1_we := io.core.blacklist_fixed_en & fixed_arbiter
-    marq_blacklist.io.fixed1_addr_in := io.core.blacklist_fixed_addr
-    marq_blacklist.io.lookup_addr := dmem_req(w).bits.addr 
-
-
-    //-------------------------------------------------------------
-    // Memory Access Record 
-
-    val marq = Module(new mar(fifo_log2 = 5))            
-
-    // load in values for the MAR
-    val rec = WireInit(0.U.asTypeOf(new MemAccessRecord))
-
-    rec.pc     := dmem_req(w).bits.uop.debug_pc
-    rec.addr   := dmem_req(w).bits.addr
-    rec.wdata  := dmem_req(w).bits.data
-    rec.isLd   := dmem_req_fire(w) && dmem_req(w).bits.uop.uses_ldq
-    rec.isSt   := dmem_req_fire(w) && (dmem_req(w).bits.uop.uses_stq || dmem_req(w).bits.uop.is_amo)
-    rec.isAMO  := dmem_req_fire(w) && dmem_req(w).bits.uop.is_amo
-    rec.isHella:= dmem_req_fire(w) && dmem_req(w).bits.is_hella  
-    rec.robIdx := dmem_req(w).bits.uop.rob_idx
-    rec.ldqIdx := dmem_req(w).bits.uop.ldq_idx
-    rec.stqIdx := dmem_req(w).bits.uop.stq_idx
-
-    marq.io.mem_access := dmem_req_fire(w) & !marq_blacklist.io.blacklist
-    marq.io.mem_record := rec
-
-    val mar_full = marq.io.full
-    marq.io.enable := io.core.mar_enable
-    io.core.mar_first_addr := marq.io.first_addr
-    marq.io.csr_data_read := io.core.mar_data_read
-    io.core.fifo_full := mar_full
-
-    dontTouch(mar_full)
+      rec(w).pc     := dmem_req(w).bits.uop.debug_pc
+      rec(w).addr   := dmem_req(w).bits.addr
+      rec(w).wdata  := dmem_req(w).bits.data
+      rec(w).isLd   := dmem_req_fire(w) && dmem_req(w).bits.uop.uses_ldq
+      rec(w).isSt   := dmem_req_fire(w) && (dmem_req(w).bits.uop.uses_stq || dmem_req(w).bits.uop.is_amo)
+      rec(w).isAMO  := dmem_req_fire(w) && dmem_req(w).bits.uop.is_amo
+      rec(w).isHella:= dmem_req_fire(w) && dmem_req(w).bits.is_hella  
+      rec(w).robIdx := dmem_req(w).bits.uop.rob_idx
+      rec(w).ldqIdx := dmem_req(w).bits.uop.ldq_idx
+      rec(w).stqIdx := dmem_req(w).bits.uop.stq_idx
+    }
 
     //-------------------------------------------------------------
     // Write data into the STQ
@@ -939,6 +980,15 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   }
   val will_fire_stdf_incoming = io.core.fp_stdata.fire
   require (xLen >= fLen) // for correct SDQ size
+
+  //------------------------------------------------------------
+  // connect marq signal
+  //------------------------------------------------------------
+  for(w <- 0 until memWidth) {
+    marq_blacklist.io.lookup_addr(w) := rec(w).addr
+    marqArray(w).io.mem_access := rec_fire(w) & !marq_blacklist.io.blacklist(w)
+    marqArray(w).io.mem_record := rec(w)
+  }
 
   //-------------------------------------------------------------
   //-------------------------------------------------------------
@@ -1384,6 +1434,23 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
         ldq(ldq_idx).bits.succeeded      := io.core.exe(w).iresp.valid || io.core.exe(w).fresp.valid
         ldq(ldq_idx).bits.debug_wb_data  := io.dmem.resp(w).bits.data
+        // -----------------------------------------
+        // marq record option 1: record when writeback
+        // -----------------------------------------
+        if(!MAR_POS) {
+          rec_fire(w) := io.dmem.resp(w).valid
+          
+          rec(w).pc     := io.dmem.resp(w).bits.uop.debug_pc
+          rec(w).addr   := ldq(ldq_idx).bits.addr.bits
+          rec(w).wdata  := io.dmem.resp(w).bits.data
+          rec(w).isLd   := io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.uses_ldq
+          rec(w).isSt   := io.dmem.resp(w).valid && (io.dmem.resp(w).bits.uop.uses_stq || io.dmem.resp(w).bits.uop.is_amo)
+          rec(w).isAMO  := io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.is_amo
+          rec(w).isHella:= false.B 
+          rec(w).robIdx := io.dmem.resp(w).bits.uop.rob_idx
+          rec(w).ldqIdx := io.dmem.resp(w).bits.uop.ldq_idx
+          rec(w).stqIdx := io.dmem.resp(w).bits.uop.stq_idx
+        }
       }
         .elsewhen (io.dmem.resp(w).bits.uop.uses_stq)
       {
@@ -1396,6 +1463,23 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
           io.core.exe(w).iresp.bits.data := io.dmem.resp(w).bits.data
 
           stq(io.dmem.resp(w).bits.uop.stq_idx).bits.debug_wb_data := io.dmem.resp(w).bits.data
+        }
+        // -----------------------------------------
+        // marq record option 1: record when writeback
+        // -----------------------------------------
+        if(!MAR_POS) {
+          rec_fire(w) := io.dmem.resp(w).valid
+          
+          rec(w).pc     := io.dmem.resp(w).bits.uop.debug_pc
+          rec(w).addr   := stq(io.dmem.resp(w).bits.uop.stq_idx).bits.addr.bits
+          rec(w).wdata  := io.dmem.resp(w).bits.data
+          rec(w).isLd   := io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.uses_ldq
+          rec(w).isSt   := io.dmem.resp(w).valid && (io.dmem.resp(w).bits.uop.uses_stq || io.dmem.resp(w).bits.uop.is_amo)
+          rec(w).isAMO  := io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.is_amo
+          rec(w).isHella:= false.B 
+          rec(w).robIdx := io.dmem.resp(w).bits.uop.rob_idx
+          rec(w).ldqIdx := io.dmem.resp(w).bits.uop.ldq_idx
+          rec(w).stqIdx := io.dmem.resp(w).bits.uop.stq_idx
         }
       }
     }
@@ -1433,6 +1517,21 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
         ldq(f_idx).bits.forward_stq_idx := wb_forward_stq_idx(w)
 
         ldq(f_idx).bits.debug_wb_data   := loadgen.data
+
+        // -----------------------------------------
+        // marq record option 1: record when writeback
+        // -----------------------------------------
+        rec_fire(w) := true.B
+        rec(w).pc     := forward_uop.debug_pc
+        rec(w).addr   := wb_forward_ld_addr(w)
+        rec(w).wdata  := loadgen.data
+        rec(w).isLd   := true.B
+        rec(w).isSt   := false.B
+        rec(w).isAMO  := false.B
+        rec(w).isHella:= false.B
+        rec(w).robIdx := forward_uop.rob_idx
+        rec(w).ldqIdx := forward_uop.ldq_idx
+        rec(w).stqIdx := wb_forward_stq_idx(w)
       }
     }
   }

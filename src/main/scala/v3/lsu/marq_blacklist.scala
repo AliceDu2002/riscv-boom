@@ -9,7 +9,7 @@ import boom.v3.common._
   * depth = 1 << fifo_log2. Matches are exact on addr.
   * Writing a fixed entry sets its internal valid bit.
   */
-class marq_blacklist(val fifo_log2: Int = 2)(implicit p: Parameters) extends BoomModule {
+class marq_blacklist(val fifo_log2: Int = 2, val nMem: Int = 1)(implicit p: Parameters) extends BoomModule {
   val io = IO(new Bundle {
     // global controls
     val clear        = Input(Bool())
@@ -26,8 +26,8 @@ class marq_blacklist(val fifo_log2: Int = 2)(implicit p: Parameters) extends Boo
     val fixed1_addr_in   = Input(UInt(coreMaxAddrBits.W))
 
     // lookup
-    val lookup_addr  = Input(UInt(coreMaxAddrBits.W))
-    val blacklist    = Output(Bool())
+    val lookup_addr = Input(Vec(nMem, UInt(coreMaxAddrBits.W)))
+    val blacklist   = Output(Vec(nMem, Bool()))
   })
 
   val depth = 1 << fifo_log2
@@ -66,14 +66,18 @@ class marq_blacklist(val fifo_log2: Int = 2)(implicit p: Parameters) extends Boo
     wptr        := wptr +% 1.U
   }
 
-  // CAM compare across dynamic entries
-  val matchesDyn = VecInit((0 until depth).map(i => valid(i) && (mem(i) === io.lookup_addr)))
-  val camHit     = matchesDyn.asUInt.orR
+  // For each lookup port
+  for (p <- 0 until nMem) {
+    // CAM compare across dynamic entries
+    val matchesDyn = VecInit((0 until depth).map(i => valid(i) && (mem(i) === io.lookup_addr(p))))
+    val camHit     = matchesDyn.asUInt.orR
 
-  // fixed compares (only if valid)
-  val fixedHit0  = fixed0_val && (io.lookup_addr === fixed0_addr)
-  val fixedHit1  = fixed1_val && (io.lookup_addr === fixed1_addr)
+    // fixed compares (only if valid)
+    val fixedHit0  = fixed0_val && (io.lookup_addr(p) === fixed0_addr)
+    val fixedHit1  = fixed1_val && (io.lookup_addr(p) === fixed1_addr)
 
-  // final result
-  io.blacklist := camHit || fixedHit0 || fixedHit1
+    // final result for this port
+    io.blacklist(p) := camHit || fixedHit0 || fixedHit1
+  }
+
 }
