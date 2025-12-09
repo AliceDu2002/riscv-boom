@@ -986,7 +986,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   //------------------------------------------------------------
   for(w <- 0 until memWidth) {
     marq_blacklist.io.lookup_addr(w) := rec(w).addr
-    marqArray(w).io.mem_access := rec_fire(w) & !marq_blacklist.io.blacklist(w)
+    marqArray(w).io.mem_access := rec_fire(w) & !marq_blacklist.io.blacklist(w) & !(io.core.fifo_full)
     marqArray(w).io.mem_record := rec(w)
   }
 
