@@ -48,6 +48,7 @@ import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.rocket
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util.Str
+import freechips.rocketchip.rocket.PRV
 
 import boom.v3.common._
 import boom.v3.exu.{BrUpdateInfo, Exception, FuncUnitResp, CommitSignals, ExeUnitResp}
@@ -158,13 +159,17 @@ class LSUCoreIO(implicit p: Parameters) extends BoomBundle()(p)
 
   val mar_enable  = Input(Bool())
   val mar_data_read  = Input(Bool())
-  val mar_first_addr = Output(UInt(coreMaxAddrBits.W))
+  val mar_first_addr = Output(UInt(64.W))
+  val mar_current_pid = Input(UInt(32.W))
+  val mar_trace_pid = Input(UInt(32.W))
   val blacklist_fixed_en = Input(Bool())
   val blacklist_fixed_addr = Input(UInt(coreMaxAddrBits.W))
   val blacklist_fifo_en = Input(Bool())
   val blacklist_fifo_addr = Input(UInt(coreMaxAddrBits.W))
   val fifo_full = Output(Bool())
-  val mar_mode = Input(Bool())
+  val mar_mode = Input(UInt(4.W))
+  val mar_prv = Input(UInt(PRV.SZ.W))
+  val time = Input(UInt(xLen.W))
 }
 
 class LSUIO(implicit p: Parameters, edge: TLEdgeOut) extends BoomBundle()(p)
@@ -180,6 +185,7 @@ class LDQEntry(implicit p: Parameters) extends BoomBundle()(p)
     with HasBoomUOP
 {
   val addr                = Valid(UInt(coreMaxAddrBits.W))
+  val vaddr               = Valid(UInt(coreMaxAddrBits.W))
   val addr_is_virtual     = Bool() // Virtual address, we got a TLB miss
   val addr_is_uncacheable = Bool() // Uncacheable, wait until head of ROB to execute
 
@@ -195,12 +201,14 @@ class LDQEntry(implicit p: Parameters) extends BoomBundle()(p)
   val forward_stq_idx     = UInt(stqAddrSz.W) // Which store did we get the store-load forward from?
 
   val debug_wb_data       = UInt(xLen.W)
+  val time                = UInt(xLen.W)
 }
 
 class STQEntry(implicit p: Parameters) extends BoomBundle()(p)
    with HasBoomUOP
 {
   val addr                = Valid(UInt(coreMaxAddrBits.W))
+  val vaddr               = Valid(UInt(coreMaxAddrBits.W))
   val addr_is_virtual     = Bool() // Virtual address, we got a TLB miss
   val data                = Valid(UInt(xLen.W))
 
@@ -208,6 +216,7 @@ class STQEntry(implicit p: Parameters) extends BoomBundle()(p)
   val succeeded           = Bool() // D$ has ack'd this, we don't need to maintain this anymore
 
   val debug_wb_data       = UInt(xLen.W)
+  val time                = UInt(xLen.W)
 }
 
 class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
@@ -316,7 +325,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   // marq full interrupt
   //--------------------------------------------------
   val mar_full = marqUni.io.full
-  io.core.fifo_full := Mux(io.core.mar_mode, mar_full, false.B) // mar_full
+  io.core.fifo_full := Mux(io.core.mar_mode(0), mar_full, false.B) // mar_full
   dontTouch(mar_full)
   
   //--------------------------------------------------
@@ -922,6 +931,9 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       ldq(ldq_idx).bits.uop.pdst            := exe_tlb_uop(w).pdst
       ldq(ldq_idx).bits.addr_is_virtual     := exe_tlb_miss(w)
       ldq(ldq_idx).bits.addr_is_uncacheable := exe_tlb_uncacheable(w) && !exe_tlb_miss(w)
+      ldq(ldq_idx).bits.vaddr.bits          := exe_tlb_vaddr(w)
+      ldq(ldq_idx).bits.vaddr.valid         := true.B
+      ldq(ldq_tail).bits.time                := io.core.time
 
       assert(!(will_fire_load_incoming(w) && ldq_incoming_e(w).bits.addr.valid),
         "[lsu] Incoming load is overwriting a valid address")
@@ -936,6 +948,9 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       stq(stq_idx).bits.addr.bits  := Mux(exe_tlb_miss(w), exe_tlb_vaddr(w), exe_tlb_paddr(w))
       stq(stq_idx).bits.uop.pdst   := exe_tlb_uop(w).pdst // Needed for AMOs
       stq(stq_idx).bits.addr_is_virtual := exe_tlb_miss(w)
+      stq(stq_idx).bits.vaddr.bits      := exe_tlb_vaddr(w)
+      stq(stq_tail).bits.time           := io.core.time
+      stq(stq_idx).bits.vaddr.valid     := true.B
 
       assert(!(will_fire_sta_incoming(w) && stq_incoming_e(w).bits.addr.valid),
         "[lsu] Incoming store is overwriting a valid address")
@@ -949,8 +964,9 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       rec_fire(w) := dmem_req_fire(w)
 
       rec(w).pc     := dmem_req(w).bits.uop.debug_pc
-      rec(w).addr   := dmem_req(w).bits.addr
+      rec(w).addr   := exe_tlb_vaddr(w)
       rec(w).wdata  := dmem_req(w).bits.data
+      rec(w).pid    := io.core.mar_current_pid
       rec(w).isLd   := dmem_req_fire(w) && dmem_req(w).bits.uop.uses_ldq
       rec(w).isSt   := dmem_req_fire(w) && (dmem_req(w).bits.uop.uses_stq || dmem_req(w).bits.uop.is_amo)
       rec(w).isAMO  := dmem_req_fire(w) && dmem_req(w).bits.uop.is_amo
@@ -958,6 +974,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       rec(w).robIdx := dmem_req(w).bits.uop.rob_idx
       rec(w).ldqIdx := dmem_req(w).bits.uop.ldq_idx
       rec(w).stqIdx := dmem_req(w).bits.uop.stq_idx
+      rec(w).time   := stq(io.dmem.resp(w).bits.uop.stq_idx).bits.time
     }
 
     //-------------------------------------------------------------
@@ -984,9 +1001,18 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   //------------------------------------------------------------
   // connect marq signal
   //------------------------------------------------------------
-  for(w <- 0 until memWidth) {
+  val priv_valid = WireDefault(false.B)
+  switch(io.core.mar_prv) {
+    is(PRV.S.U) { priv_valid := (io.core.mar_mode & 0x2.U).orR }
+    is(PRV.U.U) { priv_valid := (io.core.mar_mode & 0x4.U).orR }
+    is(PRV.M.U) { priv_valid := (io.core.mar_mode & 0x8.U).orR }
+  }
+
+  val pid_match = io.core.mar_trace_pid === 0.U || io.core.mar_trace_pid === io.core.mar_current_pid
+
+  for (w <- 0 until memWidth) {
     marq_blacklist.io.lookup_addr(w) := rec(w).addr
-    marqArray(w).io.mem_access := rec_fire(w) & !marq_blacklist.io.blacklist(w) & !(io.core.fifo_full)
+    marqArray(w).io.mem_access := rec_fire(w) & !marq_blacklist.io.blacklist(w) & !io.core.fifo_full & pid_match & priv_valid
     marqArray(w).io.mem_record := rec(w)
   }
 
@@ -1441,8 +1467,9 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
           rec_fire(w) := io.dmem.resp(w).valid
           
           rec(w).pc     := io.dmem.resp(w).bits.uop.debug_pc
-          rec(w).addr   := ldq(ldq_idx).bits.addr.bits
+          rec(w).addr   := ldq(ldq_idx).bits.vaddr.bits
           rec(w).wdata  := io.dmem.resp(w).bits.data
+          rec(w).pid    := io.core.mar_current_pid
           rec(w).isLd   := io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.uses_ldq
           rec(w).isSt   := io.dmem.resp(w).valid && (io.dmem.resp(w).bits.uop.uses_stq || io.dmem.resp(w).bits.uop.is_amo)
           rec(w).isAMO  := io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.is_amo
@@ -1450,6 +1477,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
           rec(w).robIdx := io.dmem.resp(w).bits.uop.rob_idx
           rec(w).ldqIdx := io.dmem.resp(w).bits.uop.ldq_idx
           rec(w).stqIdx := io.dmem.resp(w).bits.uop.stq_idx
+          rec(w).time   := ldq(ldq_idx).bits.time
         }
       }
         .elsewhen (io.dmem.resp(w).bits.uop.uses_stq)
@@ -1471,7 +1499,8 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
           rec_fire(w) := io.dmem.resp(w).valid
           
           rec(w).pc     := io.dmem.resp(w).bits.uop.debug_pc
-          rec(w).addr   := stq(io.dmem.resp(w).bits.uop.stq_idx).bits.addr.bits
+          rec(w).addr   := stq(io.dmem.resp(w).bits.uop.stq_idx).bits.vaddr.bits
+          rec(w).pid    := io.core.mar_current_pid
           rec(w).wdata  := io.dmem.resp(w).bits.data
           rec(w).isLd   := io.dmem.resp(w).valid && io.dmem.resp(w).bits.uop.uses_ldq
           rec(w).isSt   := io.dmem.resp(w).valid && (io.dmem.resp(w).bits.uop.uses_stq || io.dmem.resp(w).bits.uop.is_amo)
@@ -1480,6 +1509,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
           rec(w).robIdx := io.dmem.resp(w).bits.uop.rob_idx
           rec(w).ldqIdx := io.dmem.resp(w).bits.uop.ldq_idx
           rec(w).stqIdx := io.dmem.resp(w).bits.uop.stq_idx
+          rec(w).time   := stq(io.dmem.resp(w).bits.uop.stq_idx).bits.time
         }
       }
     }
@@ -1525,6 +1555,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
         rec(w).pc     := forward_uop.debug_pc
         rec(w).addr   := wb_forward_ld_addr(w)
         rec(w).wdata  := loadgen.data
+        rec(w).pid    := io.core.mar_current_pid
         rec(w).isLd   := true.B
         rec(w).isSt   := false.B
         rec(w).isAMO  := false.B
@@ -1532,6 +1563,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
         rec(w).robIdx := forward_uop.rob_idx
         rec(w).ldqIdx := forward_uop.ldq_idx
         rec(w).stqIdx := wb_forward_stq_idx(w)
+        rec(w).time   := ldq(f_idx).bits.time
       }
     }
   }

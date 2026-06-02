@@ -8,6 +8,7 @@ import boom.v3.common._
 class MemAccessRecord(implicit p: Parameters) extends BoomBundle {
   val pc     = UInt(coreMaxAddrBits.W)   // uop.debug_pc
   val addr   = UInt(coreMaxAddrBits.W)   // req.addr
+  val pid    = UInt(32.W)
   val wdata  = UInt(xLen.W)              // req.data (valid for stores/AMOs)
   val isLd   = Bool()
   val isSt   = Bool()
@@ -16,6 +17,7 @@ class MemAccessRecord(implicit p: Parameters) extends BoomBundle {
   val robIdx = UInt(robAddrSz.W)
   val ldqIdx = UInt(ldqAddrSz.W)
   val stqIdx = UInt(stqAddrSz.W)
+  val time   = UInt(xLen.W)
 }
 
 class mar_csr(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule {
@@ -27,7 +29,7 @@ class mar_csr(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule
 
     val full        = Output(Bool())
     val empty       = Output(Bool())
-    val first_addr  = Output(UInt(coreMaxAddrBits.W))
+    val first_addr  = Output(UInt(64.W))
   })
 
   val fifo_depth = 1 << fifo_log2
@@ -49,22 +51,22 @@ class mar_csr(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule
     wr_idx                       := wr_idx +% 1.U
     data(wr_idx(fifo_log2-1, 0)) := io.mem_record
   } 
-  // overwrite mechanism
-  when (io.mem_access && io.enable && io.full) {
-    wr_idx                       := wr_idx +% 1.U
-    rd_idx                       := rd_idx +% 1.U
-    data(wr_idx(fifo_log2-1, 0)) := io.mem_record
-  } 
+  // overwrite mechanism (irq does not work if this goes up forever)
+  // when (io.mem_access && io.enable && io.full) {
+  //   wr_idx                       := wr_idx +% 1.U
+  //   rd_idx                       := rd_idx +% 1.U
+  //   data(wr_idx(fifo_log2-1, 0)) := io.mem_record
+  // } 
   
   // below state machine increments through 3 stages. SW requires this to remain synchronized
-  val counter = RegInit(0.U(2.W))
+  val counter = RegInit(0.U(3.W))
 
   // stage1 -> addr (64 bit)
   // stage2 -> pc (64 bit)
   // stage3 -> single bit values (4 bit)
 
   when (io.csr_data_read) {
-    when (counter === 2.U) {
+    when (counter === 4.U) {
       rd_idx := rd_idx +% 1.U
       counter := 0.U
     } .otherwise {
@@ -75,17 +77,18 @@ class mar_csr(val fifo_log2: Int = 5)(implicit p: Parameters) extends BoomModule
   val rec     = data(rd_idx(fifo_log2 - 1, 0))
   val packed  = Cat(rec.isLd, rec.isSt, rec.isAMO, rec.isHella)
 
-  val addr_or_zero  = Mux(io.empty, 0.U, rec.addr)
-  val pc_or_zero    = Mux(io.empty, 0.U, rec.pc)
-  val packed_or_zero = Mux(io.empty,
-    0.U(coreMaxAddrBits.W),
-    Cat(0.U((coreMaxAddrBits - 4).W), packed)
-  )
+  val addr_or_zero   = Mux(io.empty, 0.U(64.W), rec.addr)
+  val pc_or_zero     = Mux(io.empty, 0.U(64.W), rec.pc)
+  val packed_or_zero = Mux(io.empty, 0.U(64.W), Cat(0.U(60.W), packed))
+  val pid_or_zero    = Mux(io.empty, 0.U(64.W), Cat(0.U(32.W), rec.pid))
+  val time_or_zero   = Mux(io.empty, 0.U(64.W), rec.time)
 
-  io.first_addr := MuxCase(0.U(coreMaxAddrBits.W), Seq(
+  io.first_addr := MuxCase(0.U(64.W), Seq(
     (counter === 0.U) -> addr_or_zero,
     (counter === 1.U) -> pc_or_zero,
-    (counter === 2.U) -> packed_or_zero
+    (counter === 2.U) -> packed_or_zero,
+    (counter === 3.U) -> pid_or_zero,
+    (counter === 4.U) -> time_or_zero
   ))
 
 }

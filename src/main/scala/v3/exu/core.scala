@@ -386,7 +386,13 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   csr.io.counters foreach { c => c.inc := RegNext(perfEvents.evaluate(c.eventSel))
   }
 
+  // marq CSRs
   io.lsu.mar_enable := csr.io.customCSRs(custom_csrs.mar_enable_idx).value
+  io.lsu.mar_current_pid := csr.io.customCSRs(custom_csrs.mar_current_pid_idx).value(31, 0)
+  io.lsu.mar_trace_pid := csr.io.customCSRs(custom_csrs.mar_trace_pid_idx).value(31, 0)
+  io.lsu.mar_prv := csr.io.status.prv
+  io.lsu.time := csr.io.time
+
   csr.io.customCSRs(custom_csrs.mar_head_idx).set   := true.B
   csr.io.customCSRs(custom_csrs.mar_head_idx).sdata := io.lsu.mar_first_addr
 
@@ -1116,18 +1122,18 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   csr.io.rw.cmd         := freechips.rocketchip.rocket.CSR.maskCmd(csr_exe_unit.io.iresp.valid, csr_rw_cmd)
   csr.io.rw.wdata       := wb_wdata
 
-  val mar_mode = RegNext(csr.io.customCSRs(custom_csrs.mar_mode_idx).value, init=false.B) // false for sample mode; true for interrupt mode
+  val mar_mode = RegNext(csr.io.customCSRs(custom_csrs.mar_mode_idx).value, init=0.U) // false for sample mode; true for interrupt mode
   io.lsu.mar_mode := mar_mode
   val mar_data_read = (csr_rw_cmd === freechips.rocketchip.rocket.CSR.R) && 
                     (csr.io.rw.wdata === 0.U) &&
-                    (csr.io.rw.addr === "hBD0".U) 
+                    (csr.io.rw.addr === "h8D0".U) 
   io.lsu.mar_data_read := mar_data_read
 
   io.lsu.blacklist_fixed_en := (csr_rw_cmd === freechips.rocketchip.rocket.CSR.W) && 
-                              (csr.io.rw.addr === "hBE0".U) 
+                              (csr.io.rw.addr === "h8E0".U) 
   io.lsu.blacklist_fixed_addr := csr.io.rw.wdata
   io.lsu.blacklist_fifo_en := (csr_rw_cmd === freechips.rocketchip.rocket.CSR.W) && 
-                              (csr.io.rw.addr === "hBF0".U) 
+                              (csr.io.rw.addr === "h8F0".U) 
   io.lsu.blacklist_fifo_addr := csr.io.rw.wdata
 
   rob.io.csr_replay.valid := csr_exe_unit.io.iresp.valid && csr.io.rw_stall

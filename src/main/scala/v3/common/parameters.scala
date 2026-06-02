@@ -201,22 +201,28 @@ class BoomCustomCSRs(implicit p: Parameters) extends freechips.rocketchip.tile.C
   def disableOOO = getOrElse(chickenCSR, _.value(3), true.B)
   def marchid = CustomCSR.constant(CSRs.marchid, BigInt(2))
 
-  def mar_enable_csr = CustomCSR(0xBC0, BigInt(0x1), Some(BigInt(0)))
+  def mar_enable_csr = CustomCSR(0x8C0, BigInt(0x1), Some(BigInt(0)))
   def mar_enable_idx = super.decls.length + 1
 
-  def mar_head_csr = CustomCSR(0xBD0, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
+  def mar_head_csr = CustomCSR(0x8D0, (BigInt(1) << 64) - 1, Some(BigInt(0))) 
   def mar_head_idx = mar_enable_idx + 1
 
-  def blacklist_fixed_addr_csr = CustomCSR(0xBE0, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
+  def blacklist_fixed_addr_csr = CustomCSR(0x8E0, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
   def blacklist_fixed_addr_idx = mar_head_idx + 1
+  
+  def mar_trace_pid_csr = CustomCSR(0x8E1, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
+  def mar_trace_pid_idx = blacklist_fixed_addr_idx + 1
+  
+  def mar_current_pid_csr = CustomCSR(0x8E2, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
+  def mar_current_pid_idx = mar_trace_pid_idx + 1
 
-  def blacklist_fifo_addr_csr = CustomCSR(0xBF0, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
-  def blacklist_fifo_addr_idx = blacklist_fixed_addr_idx + 1
+  def blacklist_fifo_addr_csr = CustomCSR(0x8F0, BigInt("FFFFFFFF", 16), Some(BigInt(0))) 
+  def blacklist_fifo_addr_idx = mar_current_pid_idx + 1
 
-  def mar_mode_csr = CustomCSR(0xBC1, BigInt(0x1), Some(BigInt(0)))
+  def mar_mode_csr = CustomCSR(0x8C1, BigInt(0xF), Some(BigInt(0)))
   def mar_mode_idx = blacklist_fifo_addr_idx + 1
 
-  override def decls: Seq[CustomCSR] = super.decls :+ marchid :+ mar_enable_csr :+ mar_head_csr :+ blacklist_fixed_addr_csr :+ blacklist_fifo_addr_csr :+ mar_mode_csr
+  override def decls: Seq[CustomCSR] = super.decls :+ marchid :+ mar_enable_csr :+ mar_head_csr :+ blacklist_fixed_addr_csr :+ mar_trace_pid_csr :+ mar_current_pid_csr :+ blacklist_fifo_addr_csr :+ mar_mode_csr
 }
 
 /**
